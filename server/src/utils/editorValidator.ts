@@ -23,7 +23,8 @@ const ALLOWED_MARK_TYPES = new Set([
   'code',
 ]);
 
-const MAX_CONTENT_LENGTH = 1_000_000; // 1MB text content limit
+export const MAX_RAW_FILE_SIZE = 1024 * 1024; // 1,048,576 bytes (1 MiB raw file limit)
+export const MAX_EDITOR_CONTENT_LENGTH = 20 * 1024 * 1024; // 20,971,520 bytes (20 MiB serialized editor JSON limit to accommodate AST overhead and escaping)
 
 export interface ValidationResult {
   valid: boolean;
@@ -43,10 +44,10 @@ export function validateEditorContent(input: unknown): ValidationResult {
   let doc: any = input;
 
   if (typeof input === 'string') {
-    if (input.length > MAX_CONTENT_LENGTH) {
+    if (input.length > MAX_EDITOR_CONTENT_LENGTH) {
       return {
         valid: false,
-        error: `Content exceeds maximum allowed size (${MAX_CONTENT_LENGTH} characters).`,
+        error: `Content exceeds maximum allowed size (${MAX_EDITOR_CONTENT_LENGTH} characters).`,
       };
     }
     try {
@@ -83,6 +84,12 @@ export function validateEditorContent(input: unknown): ValidationResult {
   }
 
   const jsonString = JSON.stringify(doc);
+  if (jsonString.length > MAX_EDITOR_CONTENT_LENGTH) {
+    return {
+      valid: false,
+      error: `Serialized content exceeds maximum allowed limit (${MAX_EDITOR_CONTENT_LENGTH} characters).`,
+    };
+  }
 
   return {
     valid: true,

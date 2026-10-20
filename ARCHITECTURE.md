@@ -222,14 +222,14 @@ DraftSpace implements database-level Optimistic Concurrency Control using an inc
 ### Deliberate Scope Decision:
 To guarantee absolute conversion fidelity, security, and performance, file import is **deliberately scoped to UTF-8 `.txt` only (<= 1 MiB)**. Markdown and DOCX are explicitly rejected.
 
-### Ingestion Pipeline (`documentController.ts`):
-1. **Multer Transport**: Handled in memory (`multer.memoryStorage()`) with a strict `1024 * 1024` byte limit. No temporary files are written to disk.
+### Ingestion Pipeline (`documentController.ts` & `editorValidator.ts`):
+1. **Multer Transport**: Handled in memory (`multer.memoryStorage()`) with a strict `1,048,576` byte (1 MiB) raw file limit. No temporary files are written to disk.
 2. **Extension Check**: Filename is checked case-insensitively for `.txt`. Other extensions are rejected with `400 UNSUPPORTED_FILE_TYPE`.
 3. **Zero-Byte Check**: Empty buffers are rejected with `400 EMPTY_FILE`.
 4. **Binary Content Check**: Buffer is inspected for null bytes (`0x00`). If detected, rejected with `400 BINARY_FILE_REJECTED`.
 5. **UTF-8 Fatal Decoding**: Decoded using `new TextDecoder('utf-8', { fatal: true })`. Any malformed byte sequences are rejected with `400 MALFORMED_UTF8`.
 6. **BOM Normalization**: UTF-8 BOM (`\uFEFF`) is detected and stripped.
-7. **ProseMirror AST Generation**: Text is split by newlines into paragraphs. Consecutive empty lines produce empty paragraphs. Script tags (e.g. `<script>alert(1)</script>`) are placed into plain text nodes, rendering them inert.
+7. **ProseMirror AST Generation & Limit Alignment**: Text is split by newlines into paragraphs. Consecutive empty lines produce empty paragraphs. Script tags (e.g. `<script>alert(1)</script>`) are placed into plain text nodes, rendering them inert. To accommodate the ProseMirror JSON AST boilerplate (~60 bytes per paragraph node) and quote/backslash escaping overhead on 1 MiB files, the serialized editor content limit is aligned to a finite, documented `20 MiB` (`20 * 1024 * 1024` bytes), and Express body-parser limit to `25mb`. Both import and subsequent document edits/saves (`PATCH /api/documents/:id`) share identical validation rules.
 8. **Document Creation**: Saved as a new document owned by the active user with a safe derived title (clamped to 120 chars).
 
 ---

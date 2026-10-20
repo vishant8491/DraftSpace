@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { prisma } from '../prisma.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
-import { validateEditorContent, convertTextToEditorJson } from '../utils/editorValidator.js';
+import { validateEditorContent, convertTextToEditorJson, MAX_RAW_FILE_SIZE } from '../utils/editorValidator.js';
 import path from 'path';
 
 const DEFAULT_EMPTY_DOC = JSON.stringify({
@@ -593,8 +593,7 @@ export async function importDocument(
     }
 
     // 3. Transport & Application 1 MiB limit check (1,048,576 bytes)
-    const MAX_FILE_SIZE = 1024 * 1024;
-    if (file.buffer.length > MAX_FILE_SIZE) {
+    if (file.buffer.length > MAX_RAW_FILE_SIZE) {
       res.status(400).json({
         error: 'File size exceeds the 1 MiB limit.',
         code: 'FILE_TOO_LARGE',
@@ -659,22 +658,14 @@ export async function importDocument(
 
     // 9. Convert raw text into valid Tiptap ProseMirror JSON (verbatim text paragraphs)
     const editorJson = convertTextToEditorJson(textContent);
-    const jsonString = JSON.stringify(editorJson);
 
-    // 10. Verify editor content limits and AST schema
-    if (jsonString.length > 1_000_000) {
-      res.status(400).json({
-        error: 'The imported document content exceeds the editor content limit.',
-        code: 'CONTENT_TOO_LARGE',
-      });
-      return;
-    }
-
+    // 10. Verify editor content limits and AST schema using unified validator
     const validation = validateEditorContent(editorJson);
     if (!validation.valid) {
+      const isTooLarge = validation.error?.includes('exceeds maximum allowed');
       res.status(400).json({
-        error: validation.error || 'Failed to construct valid editor content.',
-        code: 'INVALID_CONTENT',
+        error: validation.error || 'The imported document content exceeds the editor content limit.',
+        code: isTooLarge ? 'CONTENT_TOO_LARGE' : 'INVALID_CONTENT',
       });
       return;
     }
@@ -683,7 +674,7 @@ export async function importDocument(
     const document = await prisma.document.create({
       data: {
         title,
-        content: jsonString,
+        content: validation.jsonString!,
         ownerId: user.id,
         version: 1,
       },
