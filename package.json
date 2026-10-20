@@ -20,7 +20,8 @@
     "db:setup": "npm run db:setup --workspace=server",
     "db:migrate": "npm run db:setup --workspace=server",
     "db:seed": "npm run db:seed --workspace=server",
-    "postinstall": "npm run prisma:generate --workspace=server"
+    "postinstall": "npm run prisma:generate --workspace=server",
+    "package:submission": "node scripts/package-submission.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
