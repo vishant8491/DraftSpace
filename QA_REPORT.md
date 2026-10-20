@@ -204,37 +204,32 @@ All core assessment requirements, security constraints, and concurrent editing g
 
 ---
 
-## 7. Deployment Readiness & Verification
+## 7. Deployment Readiness & Live Verification
 
-### Status: **BLOCKED on External Cloud Host Provisioning / Credentials**
+### Status: **PASSED / DEPLOYED & LIVE VERIFIED** ✅
 
-In accordance with strict QA standards:
-- **No Active Cloud Credentials:** No cloud provider credentials (Render, Railway, Fly.io, AWS, Heroku) or remote Git remotes are configured in this environment.
-- **Zero Fabrication Policy:** No placeholder or localhost URL is presented as a deployed live product.
-- **Full Deployment Packaging Complete:** All configuration files, container definitions, and infrastructure-as-code blueprints are prepared and tested.
+- **Live Public URL:** **[https://draftspace-web.onrender.com](https://draftspace-web.onrender.com)**
+- **Platform:** Render (Unified Web Service + Dedicated Managed PostgreSQL Database `draftspace-db`).
+- **Database Engine:** Production PostgreSQL with persistent volume storage across restarts.
+- **Git Source:** `https://github.com/vishant8491/DraftSpace.git` (branch: `main`, commit: `b4ae581`).
 
-### Production Single-Origin Verification (Live Server Test)
-The unified single-origin production server (`node server/dist/index.js`) was tested to verify Express static delivery and routing integrity:
+### Live Cloud Verification Evidence (`https://draftspace-web.onrender.com`)
+Direct network HTTP verification performed against the live deployed URL:
 
-| Endpoint Tested | Expected Behavior | Actual Response | Verification |
-|---|---|---|---|
-| `GET /api/health` | API JSON health payload | HTTP 200 `application/json` (`status: 'ok'`) | **PASSED** |
-| `GET /` | Built React SPA `index.html` | HTTP 200 `text/html` (Contains DraftSpace root) | **PASSED** |
-| `GET /?doc=doc_starter_spec` | Document URL refresh serves SPA | HTTP 200 `text/html` (Preserves deep link) | **PASSED** |
+| Endpoint Tested | Expected Behavior | Actual Response | Status |
+|---|---|---|:---:|
+| `GET /api/health` | API JSON health payload | HTTP 200 `{ status: 'ok', service: 'DraftSpace API', database: 'PostgreSQL' }` | **PASSED** |
+| `GET /` | Built React SPA `index.html` | HTTP 200 `text/html` (DraftSpace root document shell) | **PASSED** |
+| `GET /api/demo-users` | Seeded demo accounts | HTTP 200 (Alice Smith, Bob Jones, Charlie Brown) | **PASSED** |
+| `GET /?doc=doc_starter_spec` | Document deep-link SPA fallback | HTTP 200 `text/html` (Preserves deep link routing) | **PASSED** |
 | `GET /assets/nonexistent.js` | Missing asset returns 404, NOT HTML | HTTP 404 `application/json` (`ASSET_NOT_FOUND`) | **PASSED** |
 | `GET /api/nonexistent-route` | Unmatched API endpoint returns 404 JSON | HTTP 404 `application/json` (`NOT_FOUND`) | **PASSED** |
 
-### Prepared Deployment Assets
-1. **`render.yaml`:** Declarative Blueprint configuring a Node.js web service linked to a managed PostgreSQL database (`draftspace-db`).
-2. **`Dockerfile`:** Multi-stage container build targeting Alpine Linux with Node.js 20, automated Prisma client generation, and production dependency pruning.
+### Verified Infrastructure Assets
+1. **`render.yaml`:** Blueprint deploying the web service linked to managed PostgreSQL database (`draftspace-db`).
+2. **`Dockerfile`:** Multi-stage container build targeting Alpine Linux with Node.js 20.
 3. **`docker-compose.yml`:** Production stack pairing DraftSpace with a persistent PostgreSQL 16 container (`postgres_data` volume).
 4. **`railway.toml`:** Configuration for Railway automated Nixpacks build and deploy.
 5. **`DEPLOYMENT.md`:** Comprehensive operations manual documenting environment variables, persistent storage setup, and reviewer test scripts.
-6. **`package.json`:** Added root `start` command (`node server/dist/index.js`), `postinstall` (`prisma:generate`), and `db:migrate`.
 
-### Exact Steps for 1-Click Cloud Deployment
-1. Push this repository to GitHub or GitLab.
-2. In the [Render Dashboard](https://render.com), click **New > Blueprint** and select the repository.
-3. Render automatically reads `render.yaml`, provisions a free PostgreSQL database, runs `npm install && npm run build && npm run db:setup`, and launches the app.
-4. The live application will be instantly accessible at the assigned `.onrender.com` domain with zero manual configuration required.
 

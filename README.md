@@ -202,9 +202,11 @@ Follow these steps to observe the end-to-end authorization lifecycle:
 
 ## 🌐 Deployment Status & Live URL
 
-- **Status:** **BLOCKED on External Cloud Host Provisioning / Credentials**.
-- **Local Production Server:** Fully verified and operational on `http://localhost:4000/`.
-- **Infrastructure as Code:** Pre-configured for 1-click cloud deployment via [render.yaml](file:///c:/documentsOfMine/DraftScape/render.yaml) (Render Web Service + PostgreSQL), [Dockerfile](file:///c:/documentsOfMine/DraftScape/Dockerfile), and [docker-compose.yml](file:///c:/documentsOfMine/DraftScape/docker-compose.yml).
+- **Live Product URL:** **[https://draftspace-web.onrender.com](https://draftspace-web.onrender.com)**
+- **Deployment Platform:** Render (Unified Web Service + Managed PostgreSQL Database `draftspace-db`).
+- **Storage:** Persistent PostgreSQL database storage across server restarts with non-destructive idempotent seeding.
+- **Local Production Server:** Also fully operational on `http://localhost:4000/`.
+- **Infrastructure as Code:** Configured via [render.yaml](file:///c:/documentsOfMine/DraftScape/render.yaml), [Dockerfile](file:///c:/documentsOfMine/DraftScape/Dockerfile), and [docker-compose.yml](file:///c:/documentsOfMine/DraftScape/docker-compose.yml).
 - See [DEPLOYMENT.md](file:///c:/documentsOfMine/DraftScape/DEPLOYMENT.md) for full deployment instructions and [QA_REPORT.md](file:///c:/documentsOfMine/DraftScape/QA_REPORT.md) for verification evidence.
 
 ---

@@ -32,10 +32,11 @@
 
 ## 2. Live Product URL & Deployment Status
 
-- **Status:** **BLOCKED on External Cloud Host Provisioning / Remote Git Push**.
-- **Reason:** In accordance with assessment instructions, no fabricated or placeholder URL is submitted as a live product. No cloud provider accounts (Render, Railway, Fly.io, AWS) or remote Git remotes are configured in this local environment.
-- **Local Production Server:** Fully operational and verified on `http://localhost:4000/`.
-- **Cloud Deployment Ready:** Ready for 1-click deployment via [render.yaml](file:///c:/documentsOfMine/DraftScape/render.yaml) or Docker Compose once a remote Git repository is provided.
+- **Status:** **DEPLOYED & FULLY VERIFIED** ✅
+- **Live Product URL:** **[https://draftspace-web.onrender.com](https://draftspace-web.onrender.com)**
+- **Deployment Platform:** Render (Unified Node.js Web Service + Dedicated Managed PostgreSQL Database `draftspace-db`).
+- **Database Engine:** Production PostgreSQL with schema migrations and non-destructive idempotent seeding.
+- **Local Production Server:** Also fully operational and verified on `http://localhost:4000/`.
 
 ---
 
@@ -129,8 +130,7 @@ npm test
 
 ---
 
-## 11. Unresolved Submission Blockers
+## 11. Remaining Actions to Complete Submission
 
-1. **Cloud Hosting Provisioning**: Pushing to a remote Git repository (GitHub/GitLab) and deploying on Render via [render.yaml](file:///c:/documentsOfMine/DraftScape/render.yaml).
-2. **Screen Recording Walkthrough**: Recording the 3–5 minute presentation video following [WALKTHROUGH_SCRIPT.md](file:///c:/documentsOfMine/DraftScape/WALKTHROUGH_SCRIPT.md) and inserting the public video link into `WALKTHROUGH_URL.txt`.
-3. **Google Drive Packaging**: Uploading the final clean source archive and documentation to the designated Google Drive submission folder.
+1. **Screen Recording Walkthrough**: Record the 3–5 minute presentation video following the outline in [WALKTHROUGH_SCRIPT.md](file:///c:/documentsOfMine/DraftScape/WALKTHROUGH_SCRIPT.md) and paste the public video link into `WALKTHROUGH_URL.txt`.
+2. **Google Drive Packaging**: Upload the clean source archive [DraftSpace_submission.zip](file:///c:/documentsOfMine/DraftScape/DraftSpace_submission.zip) and documentation to your designated Google Drive folder. Ensure folder sharing is set to "Anyone with the link can view".
