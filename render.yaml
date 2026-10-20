@@ -8,8 +8,8 @@ services:
     env: node
     plan: free
     region: oregon
-    buildCommand: npm install && npm run build && npm run db:setup
-    startCommand: npm start
+    buildCommand: npm install --include=dev && npx prisma generate --schema=server/prisma/schema.prisma && npm run build
+    startCommand: node server/scripts/db-setup.js && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
