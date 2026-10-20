@@ -142,73 +142,31 @@ function validateNode(node: any, depth: number): string | null {
 }
 
 /**
- * Convert plain text or markdown lines into a standard Tiptap JSON document
+ * Convert plain text lines into a standard Tiptap ProseMirror JSON document.
+ * Treats content strictly as text; never interprets HTML tags, scripts, or markdown.
+ * Handles optional UTF-8 BOM, normalizes newlines, and preserves empty paragraphs.
  */
 export function convertTextToEditorJson(rawText: string): any {
-  const normalized = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Strip optional UTF-8 BOM if present
+  let text = rawText;
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+
+  // Normalize Windows CRLF and classic Mac CR to standard LF
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = normalized.split('\n');
   const contentNodes: any[] = [];
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      // Empty paragraph
+    if (line.length === 0) {
+      // Empty line -> empty paragraph
       contentNodes.push({ type: 'paragraph' });
-      continue;
-    }
-
-    if (trimmed.startsWith('# ')) {
-      contentNodes.push({
-        type: 'heading',
-        attrs: { level: 1 },
-        content: [{ type: 'text', text: trimmed.slice(2).trim() }],
-      });
-    } else if (trimmed.startsWith('## ')) {
-      contentNodes.push({
-        type: 'heading',
-        attrs: { level: 2 },
-        content: [{ type: 'text', text: trimmed.slice(3).trim() }],
-      });
-    } else if (trimmed.startsWith('### ')) {
-      contentNodes.push({
-        type: 'heading',
-        attrs: { level: 3 },
-        content: [{ type: 'text', text: trimmed.slice(4).trim() }],
-      });
-    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      contentNodes.push({
-        type: 'bulletList',
-        content: [
-          {
-            type: 'listItem',
-            content: [
-              {
-                type: 'paragraph',
-                content: [{ type: 'text', text: trimmed.slice(2).trim() }],
-              },
-            ],
-          },
-        ],
-      });
-    } else if (/^\d+\.\s/.test(trimmed)) {
-      contentNodes.push({
-        type: 'orderedList',
-        content: [
-          {
-            type: 'listItem',
-            content: [
-              {
-                type: 'paragraph',
-                content: [{ type: 'text', text: trimmed.replace(/^\d+\.\s/, '').trim() }],
-              },
-            ],
-          },
-        ],
-      });
     } else {
+      // Line with text -> paragraph with a single text node (verbatim text)
       contentNodes.push({
         type: 'paragraph',
-        content: [{ type: 'text', text: trimmed }],
+        content: [{ type: 'text', text: line }],
       });
     }
   }
@@ -222,3 +180,4 @@ export function convertTextToEditorJson(rawText: string): any {
     content: contentNodes,
   };
 }
+

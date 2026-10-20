@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../api/client';
 import { DocumentItem } from '../types';
-import { X, UploadCloud, FileText, Check, Loader2, AlertCircle } from 'lucide-react';
+import { X, UploadCloud, FileText, Check, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -21,41 +21,68 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Escape key listener
+  // Focus and Escape key listener
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        handleModalClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen]);
+
+  const handleModalClose = () => {
+    setFile(null);
+    setTitle('');
+    setError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    onClose();
+  };
 
   if (!isOpen) return null;
 
   const handleFileSelection = (selectedFile: File) => {
     setError(null);
-    const validExtensions = ['.txt', '.md'];
-    const hasValidExt = validExtensions.some((ext) =>
-      selectedFile.name.toLowerCase().endsWith(ext)
-    );
 
-    if (!hasValidExt && !selectedFile.type.startsWith('text/')) {
-      setError('Please select a UTF-8 plain text (.txt) or Markdown (.md) file.');
+    // 1. Case-insensitive extension check (.txt only)
+    const isTxt = selectedFile.name.toLowerCase().endsWith('.txt');
+    if (!isTxt) {
+      setError('Only UTF-8 plain text (.txt) files are supported. Markdown (.md) and Word (.docx) are not supported.');
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
-    if (selectedFile.size > 2 * 1024 * 1024) {
-      setError('File size exceeds the 2MB limit.');
+    // 2. Zero-byte check
+    if (selectedFile.size === 0) {
+      setError('The selected file is empty (0 bytes). Please choose a file containing text.');
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // 3. 1 MiB limit check
+    const MAX_SIZE = 1024 * 1024;
+    if (selectedFile.size > MAX_SIZE) {
+      setError('File size exceeds the 1 MiB limit.');
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
     setFile(selectedFile);
     // Suggest document title from file name
-    const defaultTitle = selectedFile.name.replace(/\.[^/.]+$/, '');
-    setTitle(defaultTitle);
+    const defaultTitle = selectedFile.name.replace(/\.[^/.]+$/, '').trim() || 'Imported Document';
+    setTitle(defaultTitle.slice(0, 120));
+
+    // Reset input value so re-selecting the exact same file fires onChange
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -79,7 +106,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) {
-      setError('Please select a file to import.');
+      setError('Please select a UTF-8 .txt file to import.');
       return;
     }
 
@@ -88,7 +115,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       setError(null);
       const res = await api.importTextFile(file, title.trim());
       onImportSuccess(res.document);
-      onClose();
+      handleModalClose();
     } catch (err: any) {
       setError(err.message || 'Failed to import document');
     } finally {
@@ -97,19 +124,27 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fadeIn"
+    >
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">Import Document</h2>
-            <p className="text-sm text-slate-500">
-              Upload a UTF-8 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">.txt</code> or{' '}
-              <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">.md</code> file
+            <h2 id="import-modal-title" className="text-xl font-semibold text-slate-900">
+              Import Document
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Support for UTF-8 <code className="text-xs font-semibold bg-slate-100 px-1 py-0.5 rounded text-slate-700">.txt</code> only (up to 1 MiB)
             </p>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleModalClose}
+            aria-label="Close import dialog"
             className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -118,9 +153,22 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {error && (
-            <div className="p-3 text-sm bg-rose-50 text-rose-800 rounded-lg border border-rose-200 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 mt-0.5 flex-shrink-0" />
-              <span>{error}</span>
+            <div
+              role="alert"
+              className="p-3 text-sm bg-rose-50 text-rose-800 rounded-lg border border-rose-200 flex items-start justify-between gap-2"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 mt-0.5 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-rose-500 hover:text-rose-700 p-0.5"
+                aria-label="Dismiss error"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           )}
 
@@ -130,7 +178,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                fileInputRef.current?.click();
+              }
+            }}
+            className={`border-2 border-dashed rounded-xl p-7 text-center cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-brand-500 ${
               isDragging
                 ? 'border-brand-500 bg-brand-50'
                 : file
@@ -141,7 +196,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
             <input
               type="file"
               ref={fileInputRef}
-              accept=".txt,.md,text/plain,text/markdown"
+              accept=".txt,text/plain"
               onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   handleFileSelection(e.target.files[0]);
@@ -156,7 +211,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                   <FileText className="w-6 h-6" />
                 </div>
                 <p className="text-sm font-semibold text-slate-900 truncate max-w-xs">{file.name}</p>
-                <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(1)} KB &bull; Click to change</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {(file.size / 1024).toFixed(1)} KB &bull; Click to choose different file
+                </p>
               </div>
             ) : (
               <div className="flex flex-col items-center">
@@ -166,7 +223,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 <p className="text-sm font-medium text-slate-700">
                   Click to select or drag and drop
                 </p>
-                <p className="text-xs text-slate-400 mt-1">UTF-8 .txt or .md (up to 2MB)</p>
+                <p className="text-xs text-slate-400 mt-1">UTF-8 plain text (.txt) only &bull; Up to 1 MiB</p>
               </div>
             )}
           </div>
@@ -174,33 +231,37 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           {/* Title Input */}
           {file && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <label htmlFor="import-doc-title" className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Document Title
               </label>
               <input
+                id="import-doc-title"
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Document title..."
+                maxLength={120}
                 required
                 className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
+              <p className="text-[11px] text-slate-400 text-right">{title.length}/120</p>
             </div>
           )}
 
           {/* Action buttons */}
-          <div className="flex items-center justify-end gap-3 pt-2">
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+              onClick={handleModalClose}
+              disabled={submitting}
+              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!file || submitting}
-              className="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors shadow-sm"
+              className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors shadow-xs"
             >
               {submitting ? (
                 <>

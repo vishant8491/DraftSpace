@@ -1,8 +1,8 @@
 # DraftSpace 📝
 
-> A lightweight, modern shared document editor inspired by Google Docs, built with **React**, **TypeScript**, **Vite**, **Tailwind CSS**, **Tiptap**, **Node.js**, **Express**, and **Prisma ORM**.
+> A lightweight, modern shared document editor inspired by Google Docs, built with **React 18**, **TypeScript**, **Vite**, **Tailwind CSS**, **Tiptap**, **Node.js**, **Express**, and **Prisma ORM**.
 
-[![Tests](https://img.shields.io/badge/tests-16%20passed-emerald)](file:///c:/documentsOfMine/DraftScape/server/src/tests/api.test.ts)
+[![Tests](https://img.shields.io/badge/tests-38%20passed-emerald)](file:///c:/documentsOfMine/DraftScape/server/src/tests/api.test.ts)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](file:///c:/documentsOfMine/DraftScape/tsconfig.json)
 [![License](https://img.shields.io/badge/License-MIT-slate)](LICENSE)
 
@@ -10,25 +10,93 @@
 
 ## 🌟 Overview & Highlights
 
-DraftSpace delivers a focused vertical slice of a collaborative document suite:
-1. **Rich-Text Editing in the Browser**: Powered by Tiptap with full formatting (Bold, Italic, Underline, Headings H1/H2/H3, Bulleted & Numbered lists, Blockquotes, Code blocks, and text alignment).
-2. **Persistent Cloud Storage & Auto-Save**: Seamless debounced auto-save (1.2s debounce) with real-time feedback pills ("Saved to cloud", "Saving...", "Unsaved changes") + manual `Ctrl+S` shortcut.
-3. **Role-Based Sharing & Access Control**: Strict ownership model with granular permission delegation (`owner`, `editor`, `viewer`).
-4. **Distinct Document Organization**: Dashboard cleanly segregates "My Documents" from "Shared with me", displaying collaborator badges and role chips.
-5. **Product-Relevant File Import**: Drag-and-drop or upload UTF-8 `.txt` and `.md` files directly into editable, formatted DraftSpace documents.
-6. **Seeded Demo Personas**: Pre-seeded with 3 realistic team members and an instant navbar session switcher for testing permission boundaries without tedious signup flows.
+DraftSpace delivers a focused, secure vertical slice of a collaborative document suite:
+1. **Rich-Text Editing in the Browser**: Powered by Tiptap with formatting (Bold, Italic, Underline, Headings H1/H2/H3, Bulleted & Numbered lists, Blockquotes, Code blocks, and text alignment).
+2. **Persistent Database Storage & Serialized Auto-Save**: Debounced auto-save (800ms) with in-flight mutex, revision tracking, and caret preservation without cursor jumping + manual `Ctrl+S` shortcut.
+3. **Optimistic Concurrency Control (OCC)**: Integer `version` verification prevents lost updates. Stale saves return HTTP 409 Conflict and trigger an explicit recovery modal (copy draft, reload server version, or overwrite).
+4. **Role-Based Sharing & Access Control (RBAC)**: Strict owner-only delegation and title renaming. Non-owners cannot rename (403), grant shares (403), revoke shares (403), or delete documents (403).
+5. **Distinct Document Organization**: Dashboard cleanly segregates "My documents" from "Shared with me", displaying collaborator badges and role chips.
+6. **File Import (Deliberate Scope: UTF-8 .txt Only)**: Real multipart upload accepting UTF-8 `.txt` files up to 1 MiB. Converts paragraphs into validated editor JSON AST without interpreting tags or scripts. Rejects binary content, zero-byte files, and unsupported formats.
+7. **Seeded Demo Accounts**: Pre-seeded with 3 demo personas and an instant session switcher issuing real cryptographic `HttpOnly` sessions (tokens hashed at rest with SHA-256).
 
 ---
 
 ## 👥 Demo Personas (Instant Session Switcher)
 
-| Persona | Email | Avatar / Color | Role in Demo |
-|---------|-------|----------------|--------------|
-| **Alex Rivera** | `alex@draftspace.dev` | Emerald | **Lead Writer & Owner** — Owns *Q4 Product Strategy* and private confidential memos. |
-| **Morgan Chen** | `morgan@draftspace.dev` | Indigo | **Editor Collaborator** — Has edit rights on *Q4 Product Strategy*, owns *User Interview Insights*. |
-| **Sam Taylor** | `sam@draftspace.dev` | Amber | **Viewer Collaborator** — Has read-only rights on *Q4 Product Strategy*, owns *DevOps Runbook*. Unshared documents are strictly hidden. |
+| Demo Account | Email | Role in Demo | Initial Seed Data |
+|--------------|-------|--------------|-------------------|
+| **Alice Smith** | `alice@draftspace.dev` | **Document Owner** | Owns *Welcome to DraftSpace* and *Private Strategy Notes*. |
+| **Bob Jones** | `bob@draftspace.dev` | **Shared Editor** | Shared on *Welcome to DraftSpace*, owns *Sprint Planning Notes*. |
+| **Charlie Brown** | `charlie@draftspace.dev` | **Unshared User** | Independent user. Private documents of Alice and Bob are strictly inaccessible (403). |
 
-Use the user switcher dropdown in the top-right corner to toggle between personas instantly!
+Use the demo account dropdown in the top-right navbar to switch between accounts instantly!
+
+---
+
+## 📁 File Import: Deliberate Scope
+
+> [!IMPORTANT]
+> **DraftSpace deliberately supports UTF-8 `.txt` import only.**
+> Markdown (`.md`) and Word (`.docx`) imports are **not supported and not claimed**.
+
+### Import Requirements & Security Safeguards:
+1. **Multipart Upload**: Transmitted as real multipart form-data via Multer memory storage (no permanent temp files left on disk).
+2. **1 MiB Limit**: Configured at both transport (Multer `1024 * 1024` bytes) and application controller levels. Oversized files receive HTTP 400 (`FILE_TOO_LARGE`).
+3. **Case-Insensitive Extension**: Validates `.txt` extension case-insensitively (e.g. `document.txt` and `NOTES.TXT` are accepted; `.md`, `.docx`, `.pdf`, `.html` are rejected with HTTP 400 `UNSUPPORTED_FILE_TYPE`).
+4. **MIME Independence**: Does not rely on browser-supplied MIME types; validates extension and buffer bytes directly.
+5. **Zero-Byte File Handling**: Empty files (0 bytes) are rejected with HTTP 400 (`EMPTY_FILE`).
+6. **Binary Content Rejection**: Rejects files containing null bytes (`0x00`) with HTTP 400 (`BINARY_FILE_REJECTED`).
+7. **Strict UTF-8 & BOM Handling**: Validates UTF-8 byte sequences with `TextDecoder('utf-8', { fatal: true })`. Automatically strips optional UTF-8 BOM (`\uFEFF`) if present.
+8. **Pure Plain Text (No HTML/Script Injection)**: Raw content is treated purely as plain text paragraphs; never parsed or executed as HTML, scripts, or markdown tokens.
+9. **Safe Title Derivation**: Title is derived from the filename (trimmed, 1–120 characters, with fallback to `"Imported Document"`).
+10. **File Input Reset**: The file input resets after selection so the exact same file can be selected again for retry.
+
+---
+
+## 🔐 Sharing & Access Control Verification Flow
+
+DraftSpace implements strict server-side RBAC and request-time authorization:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice Smith (Owner)
+    actor Bob as Bob Jones (Editor)
+    actor Charlie as Charlie Brown (Unshared)
+    participant API as DraftSpace Server
+    participant DB as Database (Prisma)
+
+    Alice->>API: POST /api/documents (Create "Project Roadmap")
+    API->>DB: Insert Document (ownerId: Alice, version: 1)
+    Alice->>API: POST /api/documents/:id/shares (userId: Bob)
+    API->>DB: Insert DocumentShare (documentId, userId: Bob)
+    
+    Bob->>API: GET /api/documents
+    API-->>Bob: Returns "Project Roadmap" in "Shared with me"
+    Bob->>API: PATCH /api/documents/:id (Edit content)
+    API-->>Bob: 200 OK (version incremented to 2)
+
+    Charlie->>API: GET /api/documents/:id (Direct URL/API access)
+    API-->>Charlie: 403 Forbidden (Blocked)
+    Charlie->>API: PATCH /api/documents/:id (Direct write attempt)
+    API-->>Charlie: 403 Forbidden (Blocked)
+
+    Bob->>API: PATCH /api/documents/:id (Rename title)
+    API-->>Bob: 403 Forbidden (FORBIDDEN_RENAME: Owner only)
+    Bob->>API: POST /api/documents/:id/shares (Grant access)
+    API-->>Bob: 403 Forbidden (Owner only)
+
+    Alice->>API: DELETE /api/documents/:id/shares/Bob (Revoke Bob)
+    API->>DB: Delete DocumentShare
+    API-->>Alice: 200 OK (Revoked)
+
+    Bob->>API: PATCH /api/documents/:id (Next save attempt)
+    API-->>Bob: 403 Forbidden (Access Revoked)
+    Note over Bob: Autosave stopped; local draft preserved in RevokedAccessModal
+
+    Alice->>API: GET /api/documents/:id
+    API-->>Alice: 200 OK (Alice retains full owner access)
+```
 
 ---
 
@@ -49,7 +117,7 @@ DraftSpace supports **PostgreSQL** (for production cloud deployments) and **SQLi
 ```bash
 npm run db:setup
 ```
-*This command runs Prisma generation, pushes the schema, and seeds demo users with sample documents.*
+*This command runs Prisma generation, pushes the schema, and seeds demo users (Alice, Bob, Charlie) with sample documents.*
 
 ### 3. Run Development Servers
 ```bash
@@ -62,24 +130,42 @@ npm run dev
 
 ## 🧪 Automated Testing
 
-DraftSpace includes a comprehensive automated test suite (16 integration tests) verifying authentication, CRUD operations, permission isolation, viewer restrictions, sharing delegation, and file upload parsing:
+All 38 integration tests pass in ~3.2 seconds:
 
 ```bash
 # Run automated test suite
 npm test
 ```
 
-### Test Coverage Highlights:
-- ✅ **Health check & Auth**: Token verification and 401 unauthorized rejection.
-- ✅ **Document CRUD & Renaming**: Creation with owner role and empty title rejection (400).
-- ✅ **Access Control Enforcement**:
-  - Owner (Alex) updates content -> `200 OK`.
-  - Editor (Morgan) updates content -> `200 OK`.
-  - Viewer (Sam) blocked from editing -> `403 Forbidden`.
-  - Unshared user (Sam) blocked from viewing private document -> `403 Forbidden`.
-  - Collaborator (Morgan) blocked from deleting document -> `403 Forbidden`.
-- ✅ **Collaborator Management**: Owner grants access, non-owner rejected, owner revokes access.
-- ✅ **File Import**: UTF-8 `.txt` and `.md` parsing into semantic HTML with owner assignment.
+### Test Coverage Breakdown (38 Tests):
+1. **Demo Identity & Sessions (4 tests)**: Health check, demo user listing, HttpOnly session cookie, SHA-256 token hashing at rest.
+2. **Document Creation & Versioning (4 tests)**: Document creation, initial version = 1, valid JSON AST storage, title trimming and length limits.
+3. **Title Rename Authorization & Concurrency (4 tests)**: Owner rename, 403 FORBIDDEN_RENAME on non-owner rename, atomic rejection on mixed title+content updates.
+4. **Optimistic Concurrency Control (OCC) (3 tests)**: 409 Conflict on stale version save, server data preservation, concurrency resolution on updated version.
+5. **Sharing Management & Complete End-to-End Flow (10 tests)**:
+   - Alice creates document.
+   - Alice shares with Bob.
+   - Bob sees it under "Shared with me" and edits content.
+   - Charlie blocked from read and write (403 Forbidden).
+   - Bob blocked from renaming title (403 FORBIDDEN_RENAME).
+   - Bob blocked from granting or revoking shares (403 Forbidden).
+   - Alice revokes Bob.
+   - Bob's subsequent read and write fail with 403 Forbidden.
+   - Alice retains full owner access.
+   - Self-sharing rejected (400), unknown user rejected (404).
+6. **File Import (.txt Only, <= 1 MiB) (8 tests)**:
+   - Plain text UTF-8 `.txt` import with paragraph conversion (treating content as text, never HTML or markdown tags).
+   - Optional UTF-8 BOM acceptance.
+   - Case-insensitive `.txt` (e.g. `.TXT`).
+   - Rejection of unsupported extensions (`.md`, `.docx`, `.pdf`, `.html`) with 400 `UNSUPPORTED_FILE_TYPE`.
+   - Rejection of zero-byte file (0 bytes) with 400 `EMPTY_FILE`.
+   - Rejection of binary content containing null bytes with 400 `BINARY_FILE_REJECTED`.
+   - Rejection of malformed UTF-8 with 400 `MALFORMED_UTF8`.
+   - Rejection of oversized file (> 1 MiB) with 400 `FILE_TOO_LARGE`.
+7. **Document Isolation & Deletion (5 tests)**:
+   - Private unshared documents hidden from list queries.
+   - Non-owner delete blocked (403).
+   - Owner delete succeeds and cascades shares.
 
 ---
 
@@ -89,38 +175,6 @@ npm test
 |---------|---------|
 | `npm run dev` | Runs both server (`:4000`) and client (`:5173`) concurrently |
 | `npm run build` | Compiles TypeScript and bundles production assets for both client and server |
-| `npm test` | Runs automated Vitest/Supertest test suite |
+| `npm test` | Runs automated Vitest/Supertest test suite (38 tests) |
 | `npm run db:setup` | Initializes database schema and seeds demo users |
 | `npm run db:seed` | Re-seeds database with starter documents and personas |
-
----
-
-## 🌐 Environment Variables
-
-See [.env.example](file:///c:/documentsOfMine/DraftScape/.env.example) for defaults:
-
-```env
-# Server (.env)
-PORT=4000
-NODE_ENV=development
-DATABASE_URL="file:./dev.db"  # Or postgresql://user:pass@host:5432/draftspace
-CORS_ORIGIN="http://localhost:5173"
-
-# Client (.env)
-VITE_API_URL="http://localhost:4000/api"
-```
-
----
-
-## ☁️ Production Deployment
-
-### Option A: Unified Container (Render / Railway / Fly.io / Docker)
-The Express server is configured to serve the compiled client from `client/dist` directly for non-API routes:
-1. Build client and server: `npm run build`
-2. Point `DATABASE_URL` to your PostgreSQL database (e.g. Neon, Supabase, Render Postgres)
-3. Run `npm run db:setup`
-4. Start server: `npm run start --workspace=server`
-
-### Option B: Decoupled (Vercel Frontend + Render Backend)
-- **Frontend**: Deploy `client/` to Vercel or Netlify with environment variable `VITE_API_URL="https://your-api.onrender.com/api"`.
-- **Backend**: Deploy `server/` to Render with `DATABASE_URL` pointing to PostgreSQL.

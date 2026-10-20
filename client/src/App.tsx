@@ -7,6 +7,7 @@ import { ShareModal } from './components/ShareModal';
 import { ImportModal } from './components/ImportModal';
 import { ConflictModal } from './components/ConflictModal';
 import { UnsavedChangesModal } from './components/UnsavedChangesModal';
+import { RevokedAccessModal } from './components/RevokedAccessModal';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { DocumentItem } from './types';
 import { api } from './api/client';
@@ -27,6 +28,7 @@ export const MainContent: React.FC = () => {
   const [conflictServerVersion, setConflictServerVersion] = useState<number>(1);
   const [pendingNavigationAction, setPendingNavigationAction] = useState<(() => void) | null>(null);
   const [isUnsavedModalOpen, setIsUnsavedModalOpen] = useState<boolean>(false);
+  const [isRevokedModalOpen, setIsRevokedModalOpen] = useState<boolean>(false);
 
   // Notifications
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -124,8 +126,12 @@ export const MainContent: React.FC = () => {
       } catch (err: any) {
         if (requestId !== loadRequestIdRef.current) return;
         console.error('Failed to open document:', err);
-        setError(err.message || 'Unable to open document');
-        addToast('error', err.message || 'Unable to open document');
+        const msg =
+          err.status === 403 || err.code === 'FORBIDDEN'
+            ? 'Access Denied: You do not have permission to view or edit this document.'
+            : err.message || 'Unable to open document';
+        setError(msg);
+        addToast('error', msg);
         updateUrl(null);
         setCurrentDocument(null);
       } finally {
@@ -141,7 +147,7 @@ export const MainContent: React.FC = () => {
   useEffect(() => {
     if (!currentUser) return;
 
-    // Reset pending editor state safely when switching accounts
+    // Reset pending editor state and modals safely when switching accounts
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
@@ -150,6 +156,11 @@ export const MainContent: React.FC = () => {
     pendingDataRef.current = {};
     editRevisionRef.current = 0;
     savedRevisionRef.current = 0;
+    setIsRevokedModalOpen(false);
+    setIsConflictModalOpen(false);
+    setIsUnsavedModalOpen(false);
+    setIsShareModalOpen(false);
+    setIsImportModalOpen(false);
 
     loadDocuments();
 
@@ -264,6 +275,14 @@ export const MainContent: React.FC = () => {
           setConflictServerVersion(err.currentVersion);
         }
         setIsConflictModalOpen(true);
+      } else if (err.status === 403 || err.code === 'FORBIDDEN') {
+        // Access revoked by owner: permanently stop repeated autosave attempts
+        setSaveStatus('error');
+        if (autoSaveTimerRef.current) {
+          clearTimeout(autoSaveTimerRef.current);
+        }
+        hasPendingEditsRef.current = false;
+        setIsRevokedModalOpen(true);
       } else {
         setSaveStatus('error');
         addToast('error', err.message || 'Failed to save changes.');
@@ -562,6 +581,21 @@ export const MainContent: React.FC = () => {
           setPendingNavigationAction(null);
         }}
         saving={saveStatus === 'saving'}
+      />
+
+      {/* Revoked Access Modal */}
+      <RevokedAccessModal
+        isOpen={isRevokedModalOpen}
+        onCopyDraft={handleCopyDraft}
+        onBackToDashboard={() => {
+          setIsRevokedModalOpen(false);
+          if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+          hasPendingEditsRef.current = false;
+          pendingDataRef.current = {};
+          setCurrentDocument(null);
+          updateUrl(null);
+          loadDocuments();
+        }}
       />
 
       {/* Toast Notifications */}

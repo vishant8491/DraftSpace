@@ -205,24 +205,31 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* Share Button (Owner only has action, collaborator has view) */}
-            <button
-              type="button"
-              onClick={onOpenShareModal}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 ${
-                isOwner
-                  ? 'bg-slate-900 hover:bg-slate-800 text-white shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              }`}
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              <span>Share</span>
-              {currentDocument.shares && currentDocument.shares.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-full text-xs">
-                  {currentDocument.shares.length}
-                </span>
-              )}
-            </button>
+            {/* Share Button: Only the document owner can open sharing controls */}
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={onOpenShareModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-xs transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+                title="Manage document collaborators (Owner only)"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share</span>
+                {currentDocument.shares && currentDocument.shares.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-full text-xs">
+                    {currentDocument.shares.length}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <div
+                title="You are a shared editor on this document"
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg border border-slate-200 select-none"
+              >
+                <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                <span className="hidden sm:inline">Shared Editor</span>
+              </div>
+            )}
           </>
         )}
 

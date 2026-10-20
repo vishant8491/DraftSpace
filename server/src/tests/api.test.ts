@@ -415,45 +415,144 @@ describe('4. Access Rules & RBAC Permission Enforcement', () => {
   });
 });
 
-describe('5. Sharing Management & Constraint Integrity', () => {
-  it('Owner (Alice) can list shares, non-owner rejected with 403', async () => {
-    // Alice (Owner)
-    const aliceRes = await request(app)
-      .get('/api/documents/doc_starter_spec/shares')
-      .set('Authorization', `Bearer ${aliceToken}`);
-    expect(aliceRes.status).toBe(200);
-    expect(Array.isArray(aliceRes.body)).toBe(true);
+describe('5. Sharing Management & Complete End-to-End Demonstration', () => {
+  let demoDocId: string;
 
-    // Bob (Editor, not owner)
-    const bobRes = await request(app)
-      .get('/api/documents/doc_starter_spec/shares')
-      .set('Authorization', `Bearer ${bobToken}`);
-    expect(bobRes.status).toBe(403);
+  it('Alice creates a new document for the sharing demonstration', async () => {
+    const res = await request(app)
+      .post('/api/documents')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .send({ title: 'Sharing Demo Specification' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.document.ownerId).toBe('user_alice');
+    demoDocId = res.body.document.id;
   });
 
-  it('Owner (Alice) grants access to Charlie; duplicate grant is safe and idempotent', async () => {
-    // Initial grant
-    const res1 = await request(app)
-      .post('/api/documents/doc_starter_spec/shares')
+  it('Alice shares the document with Bob (POST /api/documents/:id/shares)', async () => {
+    const res = await request(app)
+      .post(`/api/documents/${demoDocId}/shares`)
       .set('Authorization', `Bearer ${aliceToken}`)
-      .send({ userId: 'user_charlie' });
+      .send({ userId: 'user_bob' });
 
-    expect(res1.status).toBe(200);
-    expect(res1.body.share.userId).toBe('user_charlie');
+    expect(res.status).toBe(200);
+    expect(res.body.share.userId).toBe('user_bob');
+    expect(res.body.share.documentId).toBe(demoDocId);
+  });
 
-    // Duplicate grant (safe & idempotent)
-    const res2 = await request(app)
-      .post('/api/documents/doc_starter_spec/shares')
-      .set('Authorization', `Bearer ${aliceToken}`)
-      .send({ userId: 'user_charlie' });
+  it('Bob sees the document under "Shared with me" and can edit content', async () => {
+    // 1. Bob lists documents
+    const listRes = await request(app)
+      .get('/api/documents')
+      .set('Authorization', `Bearer ${bobToken}`);
+    expect(listRes.status).toBe(200);
+    const sharedIds = listRes.body.shared.map((d: any) => d.id);
+    expect(sharedIds).toContain(demoDocId);
 
-    expect(res2.status).toBe(200);
+    // 2. Bob reads the document
+    const readRes = await request(app)
+      .get(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`);
+    expect(readRes.status).toBe(200);
+    expect(readRes.body.role).toBe('editor');
 
-    // Verify Charlie can now read the document
-    const charlieRead = await request(app)
-      .get('/api/documents/doc_starter_spec')
+    // 3. Bob edits content
+    const editRes = await request(app)
+      .patch(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`)
+      .send({
+        version: readRes.body.version,
+        content: SAMPLE_VALID_DOC_CONTENT,
+      });
+    expect(editRes.status).toBe(200);
+    expect(editRes.body.version).toBe(readRes.body.version + 1);
+  });
+
+  it('Charlie cannot access the document by direct URL/API (403 Forbidden)', async () => {
+    // Direct read attempt
+    const readRes = await request(app)
+      .get(`/api/documents/${demoDocId}`)
       .set('Authorization', `Bearer ${charlieToken}`);
-    expect(charlieRead.status).toBe(200);
+    expect(readRes.status).toBe(403);
+    expect(readRes.body.code).toBe('FORBIDDEN');
+
+    // Direct write attempt
+    const writeRes = await request(app)
+      .patch(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${charlieToken}`)
+      .send({ version: 1, content: SAMPLE_VALID_DOC_CONTENT });
+    expect(writeRes.status).toBe(403);
+    expect(writeRes.body.code).toBe('FORBIDDEN');
+  });
+
+  it('Bob (shared editor) cannot rename the document (403 FORBIDDEN_RENAME)', async () => {
+    const docRes = await request(app)
+      .get(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`);
+
+    const renameRes = await request(app)
+      .patch(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`)
+      .send({
+        version: docRes.body.version,
+        title: 'Hacked Title By Bob',
+      });
+
+    expect(renameRes.status).toBe(403);
+    expect(renameRes.body.code).toBe('FORBIDDEN_RENAME');
+  });
+
+  it('Bob (shared editor) cannot grant or revoke access (403 Forbidden)', async () => {
+    // Attempt grant
+    const grantRes = await request(app)
+      .post(`/api/documents/${demoDocId}/shares`)
+      .set('Authorization', `Bearer ${bobToken}`)
+      .send({ userId: 'user_charlie' });
+    expect(grantRes.status).toBe(403);
+    expect(grantRes.body.code).toBe('FORBIDDEN');
+
+    // Attempt list shares
+    const listSharesRes = await request(app)
+      .get(`/api/documents/${demoDocId}/shares`)
+      .set('Authorization', `Bearer ${bobToken}`);
+    expect(listSharesRes.status).toBe(403);
+
+    // Attempt revoke
+    const revokeRes = await request(app)
+      .delete(`/api/documents/${demoDocId}/shares/user_bob`)
+      .set('Authorization', `Bearer ${bobToken}`);
+    expect(revokeRes.status).toBe(403);
+  });
+
+  it('Alice revokes Bob access; Bob subsequent read/write fails with 403', async () => {
+    // 1. Alice revokes Bob
+    const revokeRes = await request(app)
+      .delete(`/api/documents/${demoDocId}/shares/user_bob`)
+      .set('Authorization', `Bearer ${aliceToken}`);
+    expect(revokeRes.status).toBe(200);
+    expect(revokeRes.body.success).toBe(true);
+
+    // 2. Bob subsequent read fails
+    const bobRead = await request(app)
+      .get(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`);
+    expect(bobRead.status).toBe(403);
+    expect(bobRead.body.code).toBe('FORBIDDEN');
+
+    // 3. Bob subsequent write fails
+    const bobWrite = await request(app)
+      .patch(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`)
+      .send({ version: 2, content: SAMPLE_VALID_DOC_CONTENT });
+    expect(bobWrite.status).toBe(403);
+    expect(bobWrite.body.code).toBe('FORBIDDEN');
+
+    // 4. Alice still has full access
+    const aliceRead = await request(app)
+      .get(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${aliceToken}`);
+    expect(aliceRead.status).toBe(200);
+    expect(aliceRead.body.role).toBe('owner');
   });
 
   it('Rejects self-sharing with 400', async () => {
@@ -475,43 +574,122 @@ describe('5. Sharing Management & Constraint Integrity', () => {
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('USER_NOT_FOUND');
   });
-
-  it('Owner (Alice) revokes Charlie access; Charlie loses read access', async () => {
-    const revokeRes = await request(app)
-      .delete('/api/documents/doc_starter_spec/shares/user_charlie')
-      .set('Authorization', `Bearer ${aliceToken}`);
-
-    expect(revokeRes.status).toBe(200);
-
-    // Charlie is blocked again
-    const charlieRead = await request(app)
-      .get('/api/documents/doc_starter_spec')
-      .set('Authorization', `Bearer ${charlieToken}`);
-
-    expect(charlieRead.status).toBe(403);
-  });
 });
 
-describe('6. Product-Relevant File Import (.txt / .md)', () => {
-  it('POST /api/documents/import parses plain text/markdown into valid editor JSON with version 1', async () => {
-    const fileContent = Buffer.from(
-      '# Engineering Handbook\n\nWelcome to DraftSpace.\n\n- Zero-downtime releases\n- Optimistic locking',
-      'utf-8'
-    );
+describe('6. File Import: Deliberate Scope (UTF-8 .txt Only, <= 1 MiB)', () => {
+  it('Imports standard UTF-8 .txt file, treating lines as plain text paragraphs without tag execution', async () => {
+    const plainText =
+      'DraftSpace Plain Text Document\n\nLine 1: Normal paragraph.\nLine 2: <script>alert("xss")</script>\nLine 3: # Not a markdown heading';
+    const fileBuffer = Buffer.from(plainText, 'utf-8');
 
     const res = await request(app)
       .post('/api/documents/import')
       .set('Authorization', `Bearer ${aliceToken}`)
-      .attach('file', fileContent, 'engineering-handbook.md');
+      .attach('file', fileBuffer, 'project-notes.txt');
 
     expect(res.status).toBe(201);
-    expect(res.body.document.title).toBe('engineering-handbook');
+    expect(res.body.document.title).toBe('project-notes');
     expect(res.body.document.ownerId).toBe('user_alice');
     expect(res.body.version).toBe(1);
 
-    // Verify stored content is valid editor JSON
+    // Verify stored content treats script and hash as plain text
     const parsed = JSON.parse(res.body.document.content);
     expect(parsed.type).toBe('doc');
-    expect(parsed.content.length).toBeGreaterThan(0);
+    const texts = parsed.content
+      .filter((p: any) => p.content && p.content[0])
+      .map((p: any) => p.content[0].text);
+    expect(texts).toContain('Line 2: <script>alert("xss")</script>');
+    expect(texts).toContain('Line 3: # Not a markdown heading');
+  });
+
+  it('Accepts Unicode text with optional UTF-8 BOM', async () => {
+    const bomBuffer = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]), // UTF-8 BOM
+      Buffer.from('Unicode content with emojis 🚀 and accents: café, résumé', 'utf-8'),
+    ]);
+
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', bomBuffer, 'unicode-bom.txt');
+
+    expect(res.status).toBe(201);
+    const parsed = JSON.parse(res.body.document.content);
+    expect(parsed.content[0].content[0].text).toContain('Unicode content with emojis 🚀');
+  });
+
+  it('Accepts case-insensitive extension (.TXT)', async () => {
+    const buffer = Buffer.from('Uppercase extension test', 'utf-8');
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', buffer, 'NOTES.TXT');
+
+    expect(res.status).toBe(201);
+    expect(res.body.document.title).toBe('NOTES');
+  });
+
+  it('Rejects non-.txt files (.md, .docx, .html) with 400 UNSUPPORTED_FILE_TYPE', async () => {
+    // Markdown
+    const mdRes = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', Buffer.from('# Heading', 'utf-8'), 'notes.md');
+    expect(mdRes.status).toBe(400);
+    expect(mdRes.body.code).toBe('UNSUPPORTED_FILE_TYPE');
+
+    // DOCX
+    const docxRes = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', Buffer.from('PK\x03\x04', 'utf-8'), 'document.docx');
+    expect(docxRes.status).toBe(400);
+    expect(docxRes.body.code).toBe('UNSUPPORTED_FILE_TYPE');
+  });
+
+  it('Rejects zero-byte empty file with 400 EMPTY_FILE', async () => {
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', Buffer.alloc(0), 'empty.txt');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('EMPTY_FILE');
+    expect(res.body.error).toContain('empty');
+  });
+
+  it('Rejects binary content containing null bytes with 400 BINARY_FILE_REJECTED', async () => {
+    const binaryBuffer = Buffer.from([0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x00, 0x57, 0x6f, 0x72, 0x6c, 0x64]);
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', binaryBuffer, 'binary.txt');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('BINARY_FILE_REJECTED');
+  });
+
+  it('Rejects malformed UTF-8 sequences with 400 MALFORMED_UTF8', async () => {
+    // Invalid UTF-8 byte sequence
+    const malformedBuffer = Buffer.from([0xc3, 0x28]);
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', malformedBuffer, 'malformed.txt');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('MALFORMED_UTF8');
+  });
+
+  it('Rejects oversized files (> 1 MiB) with 400 FILE_TOO_LARGE', async () => {
+    // 1 MiB + 100 bytes
+    const largeBuffer = Buffer.alloc(1024 * 1024 + 100, 0x61); // 'a' characters
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', largeBuffer, 'large.txt');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('FILE_TOO_LARGE');
   });
 });

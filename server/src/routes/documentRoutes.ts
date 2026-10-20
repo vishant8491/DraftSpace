@@ -16,16 +16,19 @@ import path from 'path';
 
 const router = Router();
 
-// Configure Multer for UTF-8 .txt / .md uploads (2MB limit)
+// Configure Multer for UTF-8 .txt uploads (1 MiB limit, in-memory buffer)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 1024 * 1024 }, // 1 MiB transport limit
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.txt' || ext === '.md' || file.mimetype.startsWith('text/')) {
+    if (ext === '.txt') {
       cb(null, true);
     } else {
-      cb(new Error('Only plain text (.txt) and markdown (.md) files are supported.'));
+      const err: any = new Error('Only UTF-8 plain text (.txt) files are supported.');
+      err.statusCode = 400;
+      err.code = 'UNSUPPORTED_FILE_TYPE';
+      cb(err);
     }
   },
 });

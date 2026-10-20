@@ -561,7 +561,8 @@ export async function removeShare(
 
 /**
  * POST /api/documents/import
- * Import UTF-8 .txt or .md file as a new document stored as validated editor JSON.
+ * Import UTF-8 .txt file only as a new document stored as validated editor JSON.
+ * Enforces 1 MiB limit, case-insensitive .txt extension, binary rejection, and safe title.
  */
 export async function importDocument(
   req: AuthenticatedRequest,
@@ -572,27 +573,113 @@ export async function importDocument(
     const user = req.user!;
     const file = req.file;
 
-    if (!file) {
+    // 1. Missing file check
+    if (!file || !file.buffer) {
       res.status(400).json({
-        error: 'No file uploaded. Please upload a UTF-8 .txt or .md file.',
+        error: 'No file uploaded. Please upload a UTF-8 .txt file.',
         code: 'MISSING_FILE',
       });
       return;
     }
 
-    const textContent = file.buffer.toString('utf-8');
+    // 2. Case-insensitive extension check (.txt only)
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== '.txt') {
+      res.status(400).json({
+        error: 'Only UTF-8 plain text (.txt) files are supported.',
+        code: 'UNSUPPORTED_FILE_TYPE',
+      });
+      return;
+    }
 
-    // Title from body or original filename
-    const baseName = path.basename(file.originalname, path.extname(file.originalname));
-    let title = (req.body.title && req.body.title.trim()) || baseName || 'Imported Document';
+    // 3. Transport & Application 1 MiB limit check (1,048,576 bytes)
+    const MAX_FILE_SIZE = 1024 * 1024;
+    if (file.buffer.length > MAX_FILE_SIZE) {
+      res.status(400).json({
+        error: 'File size exceeds the 1 MiB limit.',
+        code: 'FILE_TOO_LARGE',
+      });
+      return;
+    }
+
+    // 4. Zero-byte file check
+    if (file.buffer.length === 0) {
+      res.status(400).json({
+        error: 'The uploaded file is empty (0 bytes). Please upload a file containing text.',
+        code: 'EMPTY_FILE',
+      });
+      return;
+    }
+
+    // 5. Binary content rejection (check for null bytes)
+    if (file.buffer.includes(0x00)) {
+      res.status(400).json({
+        error: 'Binary files are not supported. Please upload a UTF-8 plain text (.txt) file.',
+        code: 'BINARY_FILE_REJECTED',
+      });
+      return;
+    }
+
+    // 6. Strict UTF-8 decoding validation
+    let textContent: string;
+    try {
+      const decoder = new TextDecoder('utf-8', { fatal: true });
+      textContent = decoder.decode(file.buffer);
+    } catch {
+      res.status(400).json({
+        error: 'File content is not valid UTF-8 text.',
+        code: 'MALFORMED_UTF8',
+      });
+      return;
+    }
+
+    // 7. Strip optional UTF-8 BOM if present
+    if (textContent.charCodeAt(0) === 0xfeff) {
+      textContent = textContent.slice(1);
+    }
+
+    // Check if empty after BOM strip
+    if (textContent.length === 0) {
+      res.status(400).json({
+        error: 'The uploaded file contains no text.',
+        code: 'EMPTY_FILE',
+      });
+      return;
+    }
+
+    // 8. Safe title derivation respecting 1-120 length and fallback
+    const baseName = path.basename(file.originalname, path.extname(file.originalname)).trim();
+    let title = (req.body.title && typeof req.body.title === 'string' && req.body.title.trim()) || baseName || 'Imported Document';
+    if (!title) {
+      title = 'Imported Document';
+    }
     if (title.length > 120) {
       title = title.substring(0, 120);
     }
 
-    // Convert raw text into valid Tiptap ProseMirror JSON
+    // 9. Convert raw text into valid Tiptap ProseMirror JSON (verbatim text paragraphs)
     const editorJson = convertTextToEditorJson(textContent);
     const jsonString = JSON.stringify(editorJson);
 
+    // 10. Verify editor content limits and AST schema
+    if (jsonString.length > 1_000_000) {
+      res.status(400).json({
+        error: 'The imported document content exceeds the editor content limit.',
+        code: 'CONTENT_TOO_LARGE',
+      });
+      return;
+    }
+
+    const validation = validateEditorContent(editorJson);
+    if (!validation.valid) {
+      res.status(400).json({
+        error: validation.error || 'Failed to construct valid editor content.',
+        code: 'INVALID_CONTENT',
+      });
+      return;
+    }
+
+    // 11. Create document under authenticated user with initial version 1
     const document = await prisma.document.create({
       data: {
         title,
@@ -618,3 +705,4 @@ export async function importDocument(
     next(error);
   }
 }
+

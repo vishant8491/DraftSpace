@@ -28,6 +28,16 @@ export function errorHandler(
     return;
   }
 
+  // Handle Multer upload errors
+  if ((err as any).name === 'MulterError' || (err as any).code === 'LIMIT_FILE_SIZE') {
+    const isSize = (err as any).code === 'LIMIT_FILE_SIZE';
+    res.status(400).json({
+      error: isSize ? 'File size exceeds the 1 MiB limit.' : err.message,
+      code: isSize ? 'FILE_TOO_LARGE' : ((err as any).code || 'MULTER_ERROR'),
+    });
+    return;
+  }
+
   const statusCode = err.statusCode || 500;
   const message = err.message || 'An unexpected error occurred';
   const code = err.code || 'INTERNAL_SERVER_ERROR';
