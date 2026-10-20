@@ -14,10 +14,13 @@
     "build": "npm run build --workspace=server && npm run build --workspace=client",
     "build:server": "npm run build --workspace=server",
     "build:client": "npm run build --workspace=client",
+    "start": "node server/dist/index.js",
     "test": "npm run test --workspace=server",
     "test:watch": "npm run test:watch --workspace=server",
     "db:setup": "npm run db:setup --workspace=server",
-    "db:seed": "npm run db:seed --workspace=server"
+    "db:migrate": "npm run db:setup --workspace=server",
+    "db:seed": "npm run db:seed --workspace=server",
+    "postinstall": "npm run prisma:generate --workspace=server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

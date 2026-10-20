@@ -26,13 +26,19 @@ export function originCheckMiddleware(req: Request, res: Response, next: NextFun
     return next();
   }
 
+  const host = req.get('host');
+  const sameOriginHttp = host ? `http://${host}` : null;
+  const sameOriginHttps = host ? `https://${host}` : null;
+
   const allowedOrigins = [
     config.corsOrigin,
+    sameOriginHttp,
+    sameOriginHttps,
     'http://localhost:5173',
     'http://localhost:4000',
     'http://127.0.0.1:5173',
     'http://127.0.0.1:4000',
-  ];
+  ].filter(Boolean);
 
   const isAllowed =
     allowedOrigins.includes(origin) ||

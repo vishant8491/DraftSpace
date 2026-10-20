@@ -11,6 +11,9 @@ import documentRoutes from './routes/documentRoutes.js';
 
 export const app = express();
 
+// Trust reverse proxy (Render, Railway, Fly, Heroku, AWS ALB, Cloudflare) for secure cookies & HTTPS detection
+app.set('trust proxy', 1);
+
 // Middlewares
 app.use(
   cors({
@@ -53,16 +56,35 @@ app.use('/api/documents', documentRoutes);
 app.use('/api/upload', documentRoutes);
 
 // Serve static frontend build if present (Unified single-service deployment)
-const clientDistPath = path.resolve(process.cwd(), '../client/dist');
-const altDistPath = path.resolve(process.cwd(), 'client/dist');
-const finalDistPath = fs.existsSync(clientDistPath) ? clientDistPath : altDistPath;
+const candidateDistPaths = [
+  path.resolve(process.cwd(), 'client/dist'),
+  path.resolve(process.cwd(), '../client/dist'),
+  path.resolve(process.cwd(), 'dist/client'),
+];
 
-if (fs.existsSync(finalDistPath)) {
+let finalDistPath: string | null = null;
+for (const p of candidateDistPaths) {
+  if (fs.existsSync(p) && fs.existsSync(path.join(p, 'index.html'))) {
+    finalDistPath = p;
+    break;
+  }
+}
+
+if (finalDistPath) {
   app.use(express.static(finalDistPath));
   app.get('*', (req, res, next) => {
+    // 1. API routes must never be handled by SPA fallback
     if (req.path.startsWith('/api')) {
       return next();
     }
+    // 2. Missing asset files with extensions should 404, not return HTML
+    if (/\.[a-zA-Z0-9]+$/.test(req.path)) {
+      return res.status(404).json({
+        error: `Asset not found: ${req.path}`,
+        code: 'ASSET_NOT_FOUND',
+      });
+    }
+    // 3. Document URLs, root, and clean paths receive index.html
     res.sendFile(path.join(finalDistPath, 'index.html'));
   });
 }

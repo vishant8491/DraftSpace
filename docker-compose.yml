@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: draftspace-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: draftspace
+      POSTGRES_PASSWORD: draftspace_password
+      POSTGRES_DB: draftspace
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U draftspace -d draftspace"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: draftspace-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://draftspace:draftspace_password@postgres:5432/draftspace?schema=public
+      CORS_ORIGIN: http://localhost:4000
+    ports:
+      - "4000:4000"
+
+volumes:
+  postgres_data:
+    driver: local

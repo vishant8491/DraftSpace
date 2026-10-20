@@ -149,14 +149,10 @@ export async function seed() {
 
   console.log(`[DraftSpace Seed] Ensured 3 demo users: ${alice.displayName}, ${bob.displayName}, ${charlie.displayName}`);
 
-  // Seed Doc 1: Alice's Shared Spec
+  // Seed Doc 1: Alice's Shared Spec (create only if not already present; never reset existing edits)
   const doc1 = await prisma.document.upsert({
     where: { id: 'doc_starter_spec' },
-    update: {
-      version: 1,
-      title: 'DraftSpace Product Specification',
-      content: STARTER_SPEC_JSON,
-    },
+    update: {}, // DO NOT reset documents on redeployment/restart
     create: {
       id: 'doc_starter_spec',
       title: 'DraftSpace Product Specification',
@@ -181,14 +177,10 @@ export async function seed() {
     },
   });
 
-  // Seed Doc 2: Bob's Notes
+  // Seed Doc 2: Bob's Notes (create only if not already present)
   await prisma.document.upsert({
     where: { id: 'doc_bob_notes' },
-    update: {
-      version: 1,
-      title: "Bob's Research Notes",
-      content: RESEARCH_NOTES_JSON,
-    },
+    update: {}, // DO NOT reset documents on redeployment/restart
     create: {
       id: 'doc_bob_notes',
       title: "Bob's Research Notes",
@@ -198,14 +190,10 @@ export async function seed() {
     },
   });
 
-  // Seed Doc 3: Alice's Private Memo (Unshared)
+  // Seed Doc 3: Alice's Private Memo (create only if not already present)
   await prisma.document.upsert({
     where: { id: 'doc_alice_private' },
-    update: {
-      version: 1,
-      title: "Alice's Private Executive Memo",
-      content: PRIVATE_MEMO_JSON,
-    },
+    update: {}, // DO NOT reset documents on redeployment/restart
     create: {
       id: 'doc_alice_private',
       title: "Alice's Private Executive Memo",
