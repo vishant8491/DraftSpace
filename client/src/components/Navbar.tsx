@@ -29,6 +29,8 @@ interface NavbarProps {
   onOpenConflictModal?: () => void;
   onTitleChange?: (newTitle: string) => void;
   onTitleBlur?: () => void;
+  onSwitchUser?: (userId: string) => void;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -42,6 +44,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenConflictModal,
   onTitleChange,
   onTitleBlur,
+  onSwitchUser,
+  onLogout,
 }) => {
   const { currentUser, demoUsers, switchUser, logout } = useAuth();
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
@@ -103,6 +107,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 type="text"
                 value={currentDocument.title}
                 disabled={!isOwner}
+                maxLength={120}
                 onChange={(e) => onTitleChange?.(e.target.value)}
                 onBlur={onTitleBlur}
                 onKeyDown={(e) => {
@@ -290,8 +295,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                       key={user.id}
                       type="button"
                       onClick={() => {
-                        switchUser(user.id);
                         setUserDropdownOpen(false);
+                        if (onSwitchUser) {
+                          onSwitchUser(user.id);
+                        } else {
+                          switchUser(user.id);
+                        }
                       }}
                       className={`w-full px-4 py-2.5 flex items-center justify-between text-left transition-colors ${
                         isActive ? 'bg-brand-50 text-brand-900 font-medium' : 'hover:bg-slate-50'
@@ -328,8 +337,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    logout();
                     setUserDropdownOpen(false);
+                    if (onLogout) {
+                      onLogout();
+                    } else {
+                      logout();
+                    }
                   }}
                   className="flex items-center gap-1 text-rose-600 hover:text-rose-700 font-medium focus:outline-none"
                 >

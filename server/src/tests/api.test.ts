@@ -429,6 +429,23 @@ describe('5. Sharing Management & Complete End-to-End Demonstration', () => {
     demoDocId = res.body.document.id;
   });
 
+  it('Bob cannot read or update the document before Alice shares it (403 Forbidden)', async () => {
+    // Bob attempts to read unshared doc
+    const readRes = await request(app)
+      .get(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`);
+    expect(readRes.status).toBe(403);
+    expect(readRes.body.code).toBe('FORBIDDEN');
+
+    // Bob attempts to update unshared doc
+    const writeRes = await request(app)
+      .patch(`/api/documents/${demoDocId}`)
+      .set('Authorization', `Bearer ${bobToken}`)
+      .send({ version: 1, content: SAMPLE_VALID_DOC_CONTENT });
+    expect(writeRes.status).toBe(403);
+    expect(writeRes.body.code).toBe('FORBIDDEN');
+  });
+
   it('Alice shares the document with Bob (POST /api/documents/:id/shares)', async () => {
     const res = await request(app)
       .post(`/api/documents/${demoDocId}/shares`)
@@ -438,6 +455,20 @@ describe('5. Sharing Management & Complete End-to-End Demonstration', () => {
     expect(res.status).toBe(200);
     expect(res.body.share.userId).toBe('user_bob');
     expect(res.body.share.documentId).toBe(demoDocId);
+  });
+
+  it('Duplicate share grant is idempotent and does not create duplicate records', async () => {
+    const res = await request(app)
+      .post(`/api/documents/${demoDocId}/shares`)
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .send({ userId: 'user_bob' });
+
+    expect(res.status).toBe(200);
+
+    const sharesInDb = await prisma.documentShare.findMany({
+      where: { documentId: demoDocId, userId: 'user_bob' },
+    });
+    expect(sharesInDb.length).toBe(1);
   });
 
   it('Bob sees the document under "Shared with me" and can edit content', async () => {
@@ -692,4 +723,191 @@ describe('6. File Import: Deliberate Scope (UTF-8 .txt Only, <= 1 MiB)', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('FILE_TOO_LARGE');
   });
+
+  it('Imports UTF-8 text with Hindi / complex multilingual characters and preserves plain text formatting', async () => {
+    const hindiText =
+      'ड्राफ्टस्पेस हिंदी दस्तावेज़\n\nनमस्ते दुनिया!\nयह एक बहुभाषी परीक्षण है।\nविशेष वर्ण: @#$%^&*()';
+    const buffer = Buffer.from(hindiText, 'utf-8');
+
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', buffer, 'hindi-notes.txt');
+
+    expect(res.status).toBe(201);
+    expect(res.body.document.title).toBe('hindi-notes');
+    const parsed = JSON.parse(res.body.document.content);
+    const texts = parsed.content
+      .filter((p: any) => p.content && p.content[0])
+      .map((p: any) => p.content[0].text);
+    expect(texts).toContain('नमस्ते दुनिया!');
+    expect(texts).toContain('यह एक बहुभाषी परीक्षण है।');
+  });
+
+  it('Imports .txt file even with generic MIME type (application/octet-stream)', async () => {
+    const textBuffer = Buffer.from('Plain text with generic octet-stream MIME', 'utf-8');
+    const res = await request(app)
+      .post('/api/documents/import')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .attach('file', textBuffer, { filename: 'octet.txt', contentType: 'application/octet-stream' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.document.title).toBe('octet');
+  });
 });
+
+describe('7. Rich-Text Formatting Round-Trip Persistence', () => {
+  it('Saves and re-reads full rich-text document with all supported nodes and marks', async () => {
+    const fullRichTextDoc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: 'Document Title Heading 1' }],
+        },
+        {
+          type: 'heading',
+          attrs: { level: 2 },
+          content: [{ type: 'text', text: 'Subtitle Heading 2' }],
+        },
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'Normal text with ' },
+            { type: 'text', marks: [{ type: 'bold' }], text: 'bold' },
+            { type: 'text', text: ', ' },
+            { type: 'text', marks: [{ type: 'italic' }], text: 'italic' },
+            { type: 'text', text: ', and ' },
+            { type: 'text', marks: [{ type: 'underline' }], text: 'underline' },
+            { type: 'text', text: ' formatting.' },
+          ],
+        },
+        {
+          type: 'bulletList',
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'First bullet item' }],
+                },
+              ],
+            },
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'Second bullet item' }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'orderedList',
+          attrs: { start: 1 },
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'Step 1: Plan' }],
+                },
+              ],
+            },
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'Step 2: Execute' }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'blockquote',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Simplicity is a prerequisite for reliability.' }],
+            },
+          ],
+        },
+        {
+          type: 'codeBlock',
+          attrs: { language: 'typescript' },
+          content: [{ type: 'text', text: 'const sum = (a: number, b: number) => a + b;' }],
+        },
+      ],
+    };
+
+    // 1. Create document with rich text
+    const createRes = await request(app)
+      .post('/api/documents')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .send({
+        title: 'Full Rich Text Persistence Spec',
+        content: fullRichTextDoc,
+      });
+
+    expect(createRes.status).toBe(201);
+    const docId = createRes.body.document.id;
+
+    // 2. Re-read document directly from database via API
+    const getRes = await request(app)
+      .get(`/api/documents/${docId}`)
+      .set('Authorization', `Bearer ${aliceToken}`);
+
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.document.title).toBe('Full Rich Text Persistence Spec');
+
+    const persistedContent = JSON.parse(getRes.body.document.content);
+    expect(persistedContent).toEqual(fullRichTextDoc);
+  });
+});
+
+describe('8. Missing, Malformed, and Non-Existent Document IDs', () => {
+  it('GET /api/documents/:id returns 404 for non-existent ID', async () => {
+    const res = await request(app)
+      .get('/api/documents/non_existent_doc_12345')
+      .set('Authorization', `Bearer ${aliceToken}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  it('PATCH /api/documents/:id returns 404 for non-existent ID', async () => {
+    const res = await request(app)
+      .patch('/api/documents/non_existent_doc_12345')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .send({ version: 1, title: 'Updated Title' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  it('DELETE /api/documents/:id returns 404 for non-existent ID', async () => {
+    const res = await request(app)
+      .delete('/api/documents/non_existent_doc_12345')
+      .set('Authorization', `Bearer ${aliceToken}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  it('GET /api/documents/:id handles malformed URL characters gracefully', async () => {
+    const res = await request(app)
+      .get('/api/documents/malformed--!@#$')
+      .set('Authorization', `Bearer ${aliceToken}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+});
+

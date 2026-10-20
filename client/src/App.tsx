@@ -13,7 +13,7 @@ import { DocumentItem } from './types';
 import { api } from './api/client';
 
 export const MainContent: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, switchUser, logout } = useAuth();
   const [ownedDocs, setOwnedDocs] = useState<DocumentItem[]>([]);
   const [sharedDocs, setSharedDocs] = useState<DocumentItem[]>([]);
   const [currentDocument, setCurrentDocument] = useState<DocumentItem | null>(null);
@@ -145,7 +145,26 @@ export const MainContent: React.FC = () => {
 
   // Synchronize on load and user change
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+      isSavingRef.current = false;
+      hasPendingEditsRef.current = false;
+      pendingDataRef.current = {};
+      editRevisionRef.current = 0;
+      savedRevisionRef.current = 0;
+      setOwnedDocs([]);
+      setSharedDocs([]);
+      setCurrentDocument(null);
+      updateUrl(null);
+      setIsRevokedModalOpen(false);
+      setIsConflictModalOpen(false);
+      setIsUnsavedModalOpen(false);
+      setIsShareModalOpen(false);
+      setIsImportModalOpen(false);
+      return;
+    }
 
     // Reset pending editor state and modals safely when switching accounts
     if (autoSaveTimerRef.current) {
@@ -252,6 +271,11 @@ export const MainContent: React.FC = () => {
 
       savedRevisionRef.current = revisionAtSaveStart;
 
+      // Ensure save response for document A cannot overwrite document B's save indicator or queue saves
+      if (currentDocRef.current?.id !== doc.id) {
+        return true;
+      }
+
       // Check if newer edits occurred while request was in-flight
       if (editRevisionRef.current > revisionAtSaveStart) {
         setSaveStatus('unsaved');
@@ -319,12 +343,13 @@ export const MainContent: React.FC = () => {
   const handleTitleChange = (newTitle: string) => {
     if (!currentDocument || currentDocument.ownerId !== currentUser?.id) return;
 
+    const clampedTitle = newTitle.slice(0, 120);
     editRevisionRef.current++;
     hasPendingEditsRef.current = true;
     setSaveStatus('unsaved');
 
-    setCurrentDocument((prev) => (prev ? { ...prev, title: newTitle } : null));
-    pendingDataRef.current.title = newTitle;
+    setCurrentDocument((prev) => (prev ? { ...prev, title: clampedTitle } : null));
+    pendingDataRef.current.title = clampedTitle;
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
@@ -337,11 +362,17 @@ export const MainContent: React.FC = () => {
     }, 800);
   };
 
-  // Title blur immediate save
+  // Title blur immediate save with empty title fallback
   const handleTitleBlur = () => {
     if (!currentDocument || currentDocument.ownerId !== currentUser?.id) return;
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
+    }
+    const trimmedTitle = currentDocument.title.trim();
+    if (!trimmedTitle) {
+      const fallbackTitle = 'Untitled Document';
+      setCurrentDocument((prev) => (prev ? { ...prev, title: fallbackTitle } : null));
+      pendingDataRef.current.title = fallbackTitle;
     }
     if (saveStatus !== 'conflict' && hasPendingEditsRef.current) {
       executeSave();
@@ -490,6 +521,14 @@ export const MainContent: React.FC = () => {
     }
   };
 
+  const handleSwitchUser = (userId: string) => {
+    attemptNavigation(() => switchUser(userId));
+  };
+
+  const handleLogout = () => {
+    attemptNavigation(() => logout());
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-100 selection:text-brand-900">
       {/* Top Workspace Header */}
@@ -504,6 +543,8 @@ export const MainContent: React.FC = () => {
         onOpenConflictModal={() => setIsConflictModalOpen(true)}
         onTitleChange={handleTitleChange}
         onTitleBlur={handleTitleBlur}
+        onSwitchUser={handleSwitchUser}
+        onLogout={handleLogout}
       />
 
       {/* Main Body */}

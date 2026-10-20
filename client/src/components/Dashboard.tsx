@@ -88,9 +88,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
-              Active Demo: {currentUser?.displayName}
+              Active Demo: {currentUser?.displayName || 'Signed Out'}
             </span>
-            <span className="text-xs text-slate-400">&bull; {currentUser?.email}</span>
+            {currentUser?.email && (
+              <span className="text-xs text-slate-400">&bull; {currentUser.email}</span>
+            )}
           </div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
             Document Workspace
@@ -313,19 +315,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
           <div className="space-y-1">
             <h3 className="text-base font-semibold text-slate-900">
-              {activeTab === 'owned'
+              {!currentUser
+                ? 'No active demo session'
+                : activeTab === 'owned'
                 ? searchQuery
                   ? 'No matching documents found'
                   : 'No documents created yet'
                 : 'No documents shared with this account'}
             </h3>
             <p className="text-xs sm:text-sm text-slate-500 max-w-sm mx-auto">
-              {activeTab === 'owned'
+              {!currentUser
+                ? 'Please choose a demo account from the header dropdown to view or edit documents.'
+                : activeTab === 'owned'
                 ? 'Create a new document or import a text file to begin.'
                 : 'When another user shares a document with this demo account, it will appear here.'}
             </p>
           </div>
-          {activeTab === 'owned' && !searchQuery && (
+          {currentUser && activeTab === 'owned' && !searchQuery && (
             <div className="pt-2 flex justify-center gap-2.5">
               <button
                 type="button"
