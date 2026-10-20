@@ -1,213 +1,274 @@
-# DraftSpace — Architecture & Technical Design Note
+# DraftSpace — Architectural & Technical Design Document
 
----
+## 1. System Architecture & Responsibility Boundaries
 
-## 1. System Architecture
-
-DraftSpace is architected as an npm workspace monorepo comprising a React 18 TypeScript frontend and an Express 4.22 TypeScript backend persisted via Prisma ORM:
+DraftSpace is implemented as a cohesive npm workspace monorepo divided into three distinct layers:
 
 ```mermaid
 graph TD
-    subgraph Client ["Client (React + Vite + Tailwind + Tiptap)"]
-        UI[Navbar / Dashboard / Editor UI]
-        AC[AuthContext & Demo Account Chooser]
-        API_C[Typed API Client (credentials: include)]
-        TTE[Tiptap Editor Engine (JSON Doc)]
-        AS[Debounced Auto-Save with Version Tracking]
+    subgraph Client ["Frontend Client (React 18 + Vite + Tailwind + Tiptap)"]
+        UI[Workspace Header, Dashboard, Modals]
+        ED[Tiptap Rich-Text Editor Canvas]
+        SE[Serialized Autosave Engine & Concurrency Handler]
+        AUTH_C[Demo Auth Context & Session Token Storage]
+        API_C[Typed API Client (Fetch + Credentials: include)]
     end
 
-    subgraph Server ["Server (Node.js + Express + TypeScript)"]
-        CSRF[CSRF Origin Check Middleware]
-        AUTH[Auth Middleware (HttpOnly Cookie & Bearer Token)]
-        VAL[Editor JSON & Schema Validator]
-        DC_S[DocumentController (Optimistic OCC)]
-        DSC[DemoSessionController]
-        EH[Central Error Handler]
+    subgraph API ["Backend API Server (Node.js + Express + TypeScript)"]
+        PROXY[Trust Proxy & Header Sanitization]
+        CSRF[CSRF Origin Verification Middleware]
+        AUTH_S[Authentication Middleware (Session Token Verification)]
+        VAL[AST & JSON Schema Content Validator]
+        DOC_C[Document Controller (Atomic OCC & RBAC)]
+        DEMO_C[Demo Session Controller]
+        STATIC[Static SPA File Server & Protected Fallback]
     end
 
-    subgraph Database ["Persistence Layer (Prisma ORM)"]
-        PRISMA[Prisma Client]
-        DB[(PostgreSQL / SQLite)]
+    subgraph DB ["Database Layer (Prisma ORM)"]
+        PRISMA[Prisma ORM Client]
+        STORE[(PostgreSQL / SQLite Storage)]
     end
 
-    UI --> TTE
-    TTE --> AS
-    AS --> API_C
-    UI --> API_C
-    AC --> API_C
-
-    API_C -- "REST / Cookie & JSON" --> CSRF
-    CSRF --> AUTH
-    AUTH --> VAL
-    VAL --> DC_S
-    AUTH --> DSC
-    DC_S --> PRISMA
-    DSC --> PRISMA
-    PRISMA --> DB
+    UI --> ED
+    ED --> SE
+    SE --> API_C
+    AUTH_C --> API_C
+    API_C -- "HTTPS / Cookie + Bearer" --> PROXY
+    PROXY --> CSRF
+    CSRF --> AUTH_S
+    AUTH_S --> VAL
+    VAL --> DOC_C
+    AUTH_S --> DEMO_C
+    DOC_C --> PRISMA
+    DEMO_C --> PRISMA
+    PRISMA --> STORE
+    STATIC -. "Serves client/dist" .-> UI
 ```
+
+### Component Responsibilities:
+- **Client (Frontend)**:
+  - Maintains responsive document workspace (360px mobile to 4K desktop).
+  - Renders the Tiptap ProseMirror canvas with typography, comfortable line length, and custom formatting toolbar.
+  - Manages optimistic state, debounced autosave (800ms), and in-flight request serialization.
+  - Catches HTTP 409 Concurrency Conflicts and HTTP 403 Revocations, preserving the user's uncommitted text in memory without cursor jumps or silent data loss.
+- **API (Backend)**:
+  - Resolves user identity strictly from server-issued session tokens (stored hashed at rest). Rejects body spoofing (`ownerId`, `userId`, `role` in payloads).
+  - Enforces Role-Based Access Control (RBAC): Owners have exclusive rights to rename titles, manage shares, and delete documents. Collaborators are restricted to content edits.
+  - Implements atomic Optimistic Concurrency Control (OCC) using database version incrementing.
+  - Validates ProseMirror JSON AST to guarantee that only whitelisted node types and formatting marks are accepted.
+  - Serves pre-compiled frontend static assets and implements protected SPA fallback routing.
+- **Database (Prisma ORM)**:
+  - Relational schema enforcing foreign key cascades, non-null constraints, and unique indices (e.g. `@@unique([documentId, userId])`).
+  - Supports PostgreSQL for production deployment and SQLite for zero-dependency local development and automated testing.
 
 ---
 
-## 2. Relational Data Model (Prisma ORM)
+## 2. Relational Data Model & Access Graph
 
 ```mermaid
 erDiagram
-    User ||--o{ Document : "owns"
-    User ||--o{ DocumentShare : "participates in"
-    User ||--o{ Session : "holds"
-    Document ||--o{ DocumentShare : "has collaborators"
+    User ||--o{ Document : "owns (1:N)"
+    User ||--o{ DocumentShare : "participates in (1:N)"
+    User ||--o{ Session : "holds (1:N)"
+    Document ||--o{ DocumentShare : "collaborators (1:N)"
 
     User {
-        string id PK
-        string email UK
-        string displayName
+        string id PK "cuid"
+        string email UK "unique email"
+        string displayName "user name"
         datetime createdAt
         datetime updatedAt
     }
 
     Session {
-        string id PK
+        string id PK "cuid"
         string tokenHash UK "SHA-256 hash at rest"
-        string userId FK
-        datetime expiresAt
+        string userId FK "references User.id"
+        datetime expiresAt "30-day lifetime"
         datetime createdAt
     }
 
     Document {
-        string id PK
-        string title "1-120 chars"
-        string content "Validated editor JSON"
-        string ownerId FK
-        int version "Optimistic Concurrency Control"
+        string id PK "cuid"
+        string title "1-120 chars, trimmed"
+        string content "Validated ProseMirror JSON"
+        string ownerId FK "references User.id"
+        int version "OCC incrementing integer"
         datetime createdAt
         datetime updatedAt
     }
 
     DocumentShare {
-        string id PK
-        string documentId FK
-        string userId FK
+        string id PK "cuid"
+        string documentId FK "references Document.id"
+        string userId FK "references User.id"
         datetime createdAt
     }
 ```
 
-### Unique Constraints & Cascades
-- `DocumentShare`: `@@unique([documentId, userId])` guarantees at the database level that duplicate share rows can never exist.
-- Cascades: Deleting a document automatically cascades and removes all associated shares. Deleting a user cascades and removes their sessions and owned documents.
+### Key Data Invariants & Cascade Rules:
+1. **Ownership**: Every document has exactly one `ownerId`. The creator at `POST /api/documents` is always resolved as the owner.
+2. **Collaborator Uniqueness**: `DocumentShare` enforces `@@unique([documentId, userId])`. Duplicate sharing requests execute an idempotent upsert, preventing duplicate rows or multiple grants.
+3. **Cascading Deletion**: Deleting a document automatically cascades and deletes all associated `DocumentShare` rows. Deleting a user cascades and deletes all owned documents and active sessions.
 
 ---
 
-## 3. Demo Identity & Session Security
+## 3. Server-Issued Demo Sessions & Authentication Flow
 
-1. **Explicit Demo Account Chooser**:
-   - Seeded with **Alice Smith** (`user_alice`), **Bob Jones** (`user_bob`), and **Charlie Brown** (`user_charlie`).
-   - Selecting a demo persona calls `POST /api/demo-session`.
-   - The backend generates a cryptographically secure 64-hex-character token (`crypto.randomBytes(32)`).
-   - The server stores the **SHA-256 hash** of the token at rest in the `Session` table.
-   - The server sets a secure `HttpOnly`, `SameSite: 'lax'`, path `/` cookie named `draftspace_session` with a 30-day expiry.
-2. **Identity Resolution**:
-   - Every protected request resolves identity strictly from the verified session (cookie or `Authorization: Bearer <token>`).
-   - The server **strictly ignores** any caller-supplied `ownerId`, `actingUserId`, or `role` in request bodies.
-3. **CSRF & Origin Verification**:
-   - `originCheckMiddleware` validates `Origin` headers on state-changing requests (`POST`, `PATCH`, `PUT`, `DELETE`) against trusted hosts.
-4. **Session Expiry & Logout**:
-   - Expired sessions are automatically rejected and pruned.
-   - `DELETE /api/session` revokes the session in the database and clears the HttpOnly cookie.
+1. **Mocked Demo Authentication**: To eliminate reviewer friction without sacrificing security, demo personas (**Alice**, **Bob**, **Charlie**) are pre-seeded in the database.
+2. **Token Generation**: Selecting an account dispatches `POST /api/demo-session` with the chosen `userId`. The server generates a cryptographically secure 64-character random hex token (`crypto.randomBytes(32)`).
+3. **Hashing at Rest**: The server computes the SHA-256 hash of the token (`crypto.createHash('sha256')`) and stores only the hash in the `sessions` table. Raw tokens are never stored at rest.
+4. **Transport**: The raw token is returned to the client and simultaneously set as an `HttpOnly`, `SameSite=Lax`, `Path=/` session cookie (`draftspace_session`). In production environments (`NODE_ENV=production`), the `secure: true` flag is enforced.
+5. **Request-Time Identity Resolution**: On protected requests (`/api/documents/*`), `authMiddleware` reads the cookie or `Authorization: Bearer <token>` header, hashes the incoming token, and verifies it against the `sessions` table. If valid and not expired, `req.user` is populated. Body spoofing is impossible.
 
 ---
 
-## 4. Concurrent Saves & Optimistic Concurrency Control (OCC)
+## 4. Backend Permission Enforcement (RBAC)
 
-To prevent lost updates when multiple sessions edit simultaneously without real-time multi-cursor operational transformation complexity:
-1. Every `Document` has an integer `version` initialized to `1`.
-2. Every `GET /api/documents/:id` response returns the document along with its current `version`.
-3. State-changing updates via `PATCH /api/documents/:id` **must include** the integer `version` loaded by the client:
-   ```json
-   {
-     "version": 2,
-     "title": "Updated Title",
-     "content": { "type": "doc", "content": [...] }
-   }
+All permission checks are evaluated on the server on every request:
+
+| Operation | Endpoint | Owner | Shared Editor | Unshared User |
+|---|---|:---:|:---:|:---:|
+| **Read Document** | `GET /api/documents/:id` | ✅ Allowed | ✅ Allowed | ❌ 403 Forbidden |
+| **Edit Content** | `PATCH /api/documents/:id` | ✅ Allowed | ✅ Allowed | ❌ 403 Forbidden |
+| **Rename Title** | `PATCH /api/documents/:id` | ✅ Allowed | ❌ 403 FORBIDDEN_RENAME | ❌ 403 Forbidden |
+| **Mixed Update (Title + Content)** | `PATCH /api/documents/:id` | ✅ Allowed | ❌ 403 (Atomic Rejection) | ❌ 403 Forbidden |
+| **List Collaborators** | `GET /api/documents/:id/shares` | ✅ Allowed | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **Grant Collaborator Access** | `POST /api/documents/:id/shares` | ✅ Allowed | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **Revoke Access** | `DELETE /api/documents/:id/shares/:userId` | ✅ Allowed | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **Delete Document** | `DELETE /api/documents/:id` | ✅ Allowed | ❌ 403 Forbidden | ❌ 403 Forbidden |
+
+### Atomic Rejection of Mixed Updates:
+If a shared collaborator sends a payload modifying both `content` and `title`, the controller validates role authorization **before** applying any mutation. The entire request is rejected atomically with HTTP 403 (`FORBIDDEN_RENAME`); content is not updated and the version is not incremented.
+
+---
+
+## 5. Editor JSON Persistence & ProseMirror AST Validation
+
+DraftSpace avoids storing raw HTML strings or unvalidated text blobs. Document content is stored as serialized ProseMirror JSON AST.
+
+### Recursive Node & Mark Validation (`editorValidator.ts`):
+Before persisting any content update to the database, the backend parses the JSON string and recursively verifies every node against a strict schema:
+- **Allowed Top-Level Node**: `doc`.
+- **Allowed Block Nodes**: `paragraph`, `heading` (attrs: `level` 1–3), `bulletList`, `orderedList` (attrs: `start`), `listItem`, `blockquote`, `codeBlock` (attrs: `language`).
+- **Allowed Inline Nodes**: `text`.
+- **Allowed Formatting Marks**: `bold`, `italic`, `underline`.
+- **Sanitization**: Any unexpected node type (e.g. `script`, `iframe`, `object`, `applet`) or unknown mark immediately fails validation with HTTP 400 (`INVALID_CONTENT`), neutralizing XSS injection attempts at the API boundary.
+
+---
+
+## 6. Autosave Request Serialization & Caret Preservation
+
+A frequent pitfall in rich-text web editors is cursor jumping or loss of keystrokes during background saves. DraftSpace resolves this with a serialized state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: Document Loaded
+    Idle --> Unsaved: Keystroke Typed (editRevision++)
+    Unsaved --> Unsaved: Keystrokes continue (Debounce reset to 800ms)
+    Unsaved --> Saving: Debounce timer expires
+    
+    state Saving {
+        [*] --> InFlight: Dispatch PATCH (with revisionAtSaveStart)
+        InFlight --> NewerEditsTyped: User types while PATCH is in flight
+        NewerEditsTyped --> InFlight: editRevision++
+    }
+    
+    InFlight --> Saved: PATCH 200 OK (editRevision == revisionAtSaveStart)
+    InFlight --> ReSave: PATCH 200 OK (editRevision > revisionAtSaveStart)
+    ReSave --> Saving: Immediately queue next PATCH with latest version
+    
+    InFlight --> Conflict: PATCH 409 Conflict (Stale Version)
+    Conflict --> Idle: User resolves via ConflictModal
+    
+    InFlight --> Revoked: PATCH 403 Forbidden (Access Denied)
+    Revoked --> Idle: Halt autosave; preserve draft in RevokedAccessModal
+```
+
+### Caret Preservation Mechanism:
+- In React, calling `editor.commands.setContent()` resets the ProseMirror selection to position 0 (the beginning of the document).
+- DraftSpace ensures `editor.commands.setContent()` is called **only** when navigating to a new document or when explicitly reloading from the server during conflict recovery.
+- When an autosave request succeeds, the client updates the local document version (`versionRef.current = newVersion`) without re-setting editor content, preserving the user's active cursor position and selection.
+
+---
+
+## 7. Atomic Optimistic Concurrency Control (OCC)
+
+DraftSpace implements database-level Optimistic Concurrency Control using an incrementing integer `version` field.
+
+### Concurrency Sequence:
+1. Client fetches Document with `version = N`.
+2. Client sends `PATCH /api/documents/:id` with `{ version: N, content: "..." }`.
+3. Server executes atomic Prisma update:
+   ```typescript
+   const updated = await prisma.document.update({
+     where: { id, version: clientVersion },
+     data: {
+       content: newContentJson,
+       version: { increment: 1 }
+     }
+   });
    ```
-4. **Atomic Version Verification**:
-   - If the database `version` matches the incoming `version`:
-     - The document is updated.
-     - The `version` is atomically incremented by 1.
-     - Returns `{ document, version: 3, role }`.
-   - If the database `version` does not match:
-     - The update is rejected with `409 Conflict`.
-     - Returns `{ error: "Document version conflict...", code: "CONCURRENCY_CONFLICT", currentVersion }`.
-     - The newer server content is **never silently overwritten**.
+4. If another session updated the document in the interim, `version` in the database is already `N + 1`. The `where` clause fails to match, Prisma throws error `P2025`, and the server returns `409 CONCURRENCY_CONFLICT` with `currentVersion: N + 1`.
+5. The client catches the 409, sets `saveStatus = 'conflict'`, and displays the `ConflictModal`. The user can:
+   - **Overwrite with My Draft**: Fetches the newest version and applies the local draft with the incremented version.
+   - **Reload Server Version**: Discards the local draft and reloads the current server content.
+   - **Copy Draft**: Copies local text to clipboard for safety.
 
 ---
 
-## 5. Strict Role-Based Access Control (RBAC)
+## 8. File Upload Validation & Deliberate Scope
 
-The backend enforces strict access control:
-- **Owner**: Read, edit content, rename title, list shares, grant access, revoke access, delete.
-- **Shared Editor**: Read and edit content.
-- **Unshared User**: Cannot read, edit, rename, or share.
-- **Owner-Only Renames**:
-  - Only the document owner can rename document titles.
-  - If a shared editor attempts to rename a document (even in a mixed update containing content), the request is **rejected atomically with HTTP 403 Forbidden** (`code: "FORBIDDEN_RENAME"`).
-- **List Isolation**:
-  - `GET /api/documents` queries only documents owned by the active user or shared with the active user. Unshared private documents are never included in list responses.
+### Deliberate Scope Decision:
+To guarantee absolute conversion fidelity, security, and performance, file import is **deliberately scoped to UTF-8 `.txt` only (<= 1 MiB)**. Markdown and DOCX are explicitly rejected.
 
----
-
-## 6. Rich-Text Editor JSON Schema Validation
-
-Rather than storing unverified strings or raw HTML, DraftSpace stores rich text as validated ProseMirror/Tiptap AST JSON.
-
-The backend schema validator (`server/src/utils/editorValidator.ts`) enforces:
-1. **Root Requirement**: Must be an object with `type: "doc"`.
-2. **Allowed Node Types**: `doc`, `paragraph`, `heading` (levels 1..3), `bulletList`, `orderedList`, `listItem`, `blockquote`, `codeBlock`, `horizontalRule`, `text`.
-3. **Allowed Marks**: `bold`, `italic`, `underline`, `code`.
-4. **XSS & Unsupported Structure Rejection**:
-   - Any unknown node (e.g. `rawHtml`, `script`, `iframe`, `customWidget`) is rejected with HTTP 400 (`code: "INVALID_CONTENT"`).
-5. **Payload Limits**: Max payload text length enforced to prevent memory exhaustion attacks.
+### Ingestion Pipeline (`documentController.ts`):
+1. **Multer Transport**: Handled in memory (`multer.memoryStorage()`) with a strict `1024 * 1024` byte limit. No temporary files are written to disk.
+2. **Extension Check**: Filename is checked case-insensitively for `.txt`. Other extensions are rejected with `400 UNSUPPORTED_FILE_TYPE`.
+3. **Zero-Byte Check**: Empty buffers are rejected with `400 EMPTY_FILE`.
+4. **Binary Content Check**: Buffer is inspected for null bytes (`0x00`). If detected, rejected with `400 BINARY_FILE_REJECTED`.
+5. **UTF-8 Fatal Decoding**: Decoded using `new TextDecoder('utf-8', { fatal: true })`. Any malformed byte sequences are rejected with `400 MALFORMED_UTF8`.
+6. **BOM Normalization**: UTF-8 BOM (`\uFEFF`) is detected and stripped.
+7. **ProseMirror AST Generation**: Text is split by newlines into paragraphs. Consecutive empty lines produce empty paragraphs. Script tags (e.g. `<script>alert(1)</script>`) are placed into plain text nodes, rendering them inert.
+8. **Document Creation**: Saved as a new document owned by the active user with a safe derived title (clamped to 120 chars).
 
 ---
 
-## 7. Product-Relevant File Import Pipeline
+## 9. Deployment Architecture
 
-`POST /api/documents/import` accepts UTF-8 `.txt` and `.md` files via multipart upload:
-1. Validates file size (≤ 2MB) and extensions (`.txt`, `.md`).
-2. Converts raw text lines, markdown headings (`#`, `##`, `###`), and lists (`-`, `1.`) into a valid Tiptap ProseMirror document JSON structure.
-3. Derives document title from the filename (trimmed, 1–120 characters).
-4. Persists the document in the database owned by the active user with initial `version = 1`.
+DraftSpace is configured for zero-friction single-origin deployment:
+
+- **Unified Single Origin**: The Express server serves both API routes (`/api/*`) and pre-compiled client assets (`client/dist`). This eliminates CORS preflight latency, third-party cookie restrictions, and separate origin costs.
+- **Reverse Proxy Support**: `app.set('trust proxy', 1)` enables accurate HTTPS and secure cookie detection behind Render, Railway, Fly.io, or Cloudflare.
+- **SPA Fallback Routing**: Clean URLs and deep links (such as `/?doc=<id>`) serve `index.html`. Asset requests containing extensions (`*.js`, `*.css`) return HTTP 404 JSON when missing, preventing script execution errors.
+- **Infrastructure as Code**:
+  - `render.yaml`: Provisions a web service + managed PostgreSQL database.
+  - `Dockerfile`: Multi-stage Alpine Linux container.
+  - `docker-compose.yml`: Local/remote stack pairing DraftSpace with PostgreSQL 16.
+  - `railway.toml`: Automated Nixpacks build and deploy configuration.
 
 ---
 
-## 8. Frontend Architecture, Save Engine & Concurrency Recovery
+## 10. Scope Prioritization Rationale
 
-### Serialized Save Engine & Revision Tracking
-1. **Debounce & Concurrency Mutex**:
-   - Edits are debounced by 800ms to minimize network traffic while maintaining responsive persistence.
-   - `isSavingRef` acts as a concurrency mutex: if a save is in-flight, subsequent edits are flagged dirty (`hasPendingEditsRef = true`) rather than firing overlapping network writes against the same version.
-2. **Revision Tracking**:
-   - `editRevisionRef` increments on every keystroke.
-   - When an in-flight save completes, if `editRevisionRef > revisionAtSaveStart`, the state remains `unsaved` and schedules an immediate follow-up save against the newly acknowledged server version.
-3. **Caret Position Preservation**:
-   - `TiptapEditor.tsx` isolates `editor.commands.setContent()` strictly to `documentId` transitions.
-   - Normal autosaves update the local document metadata and version number in React state without calling `setContent()`, completely preventing caret jumps to position 0 during typing.
+During development, architectural effort was deliberately concentrated on:
+1. **Data Integrity & Concurrency**: Preventing silent overwrites through atomic OCC and serialized autosaves rather than attempting fragile, half-working real-time websockets.
+2. **Server-Side Security**: Verifying all permissions, title renames, share grants, and AST nodes on the server rather than trusting client-side logic.
+3. **Operational Robustness**: Implementing database migrations, non-destructive idempotent seeds, and clean single-origin deployment manifests.
 
-### 409 Conflict Recovery Flow
-1. If a concurrent save returns HTTP 409, the client transitions `saveStatus` to `'conflict'`.
-2. Autosave is stopped immediately, and the local draft is preserved in memory.
-3. The `ConflictModal` provides three explicit recovery paths:
-   - **Copy Local Draft**: Copies local JSON/text to the clipboard for manual merge safety.
-   - **Reload Server Version**: Discards the conflicting draft and pulls the latest acknowledged server content.
-   - **Force Overwrite**: Explicitly sends the draft with the newly reported server version (`conflictServerVersion`).
+---
 
-### Navigation & Unsaved Changes Guard
-- In-app document switches trigger `attemptNavigation()`: if dirty edits exist, an accessible warning dialog prompts the user to either **Save & Proceed**, **Discard Changes & Leave**, or **Stay Here**.
-- Tab closing or browser reloads trigger `window.beforeunload` warning prompts when unsaved edits are dirty.
-- When switching demo accounts, pending editor state and timers are purged cleanly to prevent data leakage between sessions.
+## 11. Concrete Next Steps (2–4 Hour Roadmap)
 
-### Accessibility (a11y) & Responsive Design
-- Screen-reader announcements (`role="status"`, `aria-live="polite"`) for save transitions (`Saved`, `Saving...`, `Unsaved`, `Save failed`, `Conflict`).
-- All interactive controls use semantic `<button>` elements with clear `aria-label`, visible keyboard focus rings (`focus:ring-brand-500`), and `aria-pressed` toggles on formatting tools.
-- Modals implement keyboard focus traps, `Escape`-to-close listeners, and backdrop click dismissal.
-- Full responsive support from 360px mobile viewports (wrapping toolbar, hidden non-essential icons) to tablet (768px) and wide desktop canvases.
+If allocated an additional 2–4 hours of development time, the recommended prioritized tasks are:
 
+1. **Presence Awareness & Active Collaborator Avatars (1 hour)**:
+   - Implement a lightweight heartbeat endpoint (`POST /api/documents/:id/presence`) pinged every 10 seconds.
+   - Display collaborator avatars in the header showing who currently has the document open.
+2. **Document Export Functionality (45 minutes)**:
+   - Add an **Export** button in the editor toolbar supporting download as `.txt` or `.html` (with formatted CSS).
+3. **Revision History / Audit Log (1 hour)**:
+   - Create a `DocumentRevision` table recording snapshots on manual save or every 10 autosave versions.
+   - Add a "Version History" drawer allowing users to review and restore prior versions.
+4. **Interactive Comment Threads (45 minutes)**:
+   - Add inline text selection comments using ProseMirror decorations and a `Comment` model associated with the document.

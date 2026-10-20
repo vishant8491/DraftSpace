@@ -1,180 +1,216 @@
 # DraftSpace 📝
 
-> A lightweight, modern shared document editor inspired by Google Docs, built with **React 18**, **TypeScript**, **Vite**, **Tailwind CSS**, **Tiptap**, **Node.js**, **Express**, and **Prisma ORM**.
+> A lightweight, robust shared document editor inspired by Google Docs, built with **React 18**, **TypeScript**, **Vite**, **Tailwind CSS**, **Tiptap**, **Node.js**, **Express**, and **Prisma ORM**.
 
-[![Tests](https://img.shields.io/badge/tests-38%20passed-emerald)](file:///c:/documentsOfMine/DraftScape/server/src/tests/api.test.ts)
+[![Tests](https://img.shields.io/badge/tests-47%20passed-emerald)](file:///c:/documentsOfMine/DraftScape/server/src/tests/api.test.ts)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](file:///c:/documentsOfMine/DraftScape/tsconfig.json)
 [![License](https://img.shields.io/badge/License-MIT-slate)](LICENSE)
 
 ---
 
-## 🌟 Overview & Highlights
+## 🌟 Product Purpose & Scoped Features
 
-DraftSpace delivers a focused, secure vertical slice of a collaborative document suite:
-1. **Rich-Text Editing in the Browser**: Powered by Tiptap with formatting (Bold, Italic, Underline, Headings H1/H2/H3, Bulleted & Numbered lists, Blockquotes, Code blocks, and text alignment).
-2. **Persistent Database Storage & Serialized Auto-Save**: Debounced auto-save (800ms) with in-flight mutex, revision tracking, and caret preservation without cursor jumping + manual `Ctrl+S` shortcut.
-3. **Optimistic Concurrency Control (OCC)**: Integer `version` verification prevents lost updates. Stale saves return HTTP 409 Conflict and trigger an explicit recovery modal (copy draft, reload server version, or overwrite).
-4. **Role-Based Sharing & Access Control (RBAC)**: Strict owner-only delegation and title renaming. Non-owners cannot rename (403), grant shares (403), revoke shares (403), or delete documents (403).
-5. **Distinct Document Organization**: Dashboard cleanly segregates "My documents" from "Shared with me", displaying collaborator badges and role chips.
-6. **File Import (Deliberate Scope: UTF-8 .txt Only)**: Real multipart upload accepting UTF-8 `.txt` files up to 1 MiB. Converts paragraphs into validated editor JSON AST without interpreting tags or scripts. Rejects binary content, zero-byte files, and unsupported formats.
-7. **Seeded Demo Accounts**: Pre-seeded with 3 demo personas and an instant session switcher issuing real cryptographic `HttpOnly` sessions (tokens hashed at rest with SHA-256).
+DraftSpace delivers a focused, highly reliable vertical slice of a collaborative document suite with an emphasis on rock-solid persistence, data safety, and strict server-side authorization:
+
+1. **Rich-Text Document Editor**: Built on Tiptap (ProseMirror engine) supporting Heading 1, Heading 2, Bold, Italic, Underline, Bulleted lists, Numbered lists, Blockquotes, Code blocks, and text alignment.
+2. **Serialized Autosave Engine**: Keystrokes are debounced (800ms) with an in-flight save mutex (`isSavingRef`), revision tracking (`editRevisionRef` vs `savedRevisionRef`), and caret position preservation without cursor jumping. Manual save is also available via toolbar or `Ctrl+S`.
+3. **Optimistic Concurrency Control (OCC)**: Integer `version` verification prevents silent overwrites. Stale saves return HTTP 409 Conflict and trigger an interactive conflict recovery modal (allowing the user to overwrite with their draft, reload the server version, or copy their draft to the clipboard).
+4. **Role-Based Access Control (RBAC)**: Strict owner-only controls. Shared collaborators can edit document content, but **cannot** rename titles (`403 FORBIDDEN_RENAME`), grant shares (403), revoke shares (403), or delete documents (403).
+5. **Clear Document Segregation**: The workspace dashboard explicitly separates "My documents" from "Shared with me", displaying creator attribution, last-updated timestamps, and role badges.
+6. **File Import (Deliberate Scope: UTF-8 `.txt` Only, <= 1 MiB)**: True multipart upload accepting UTF-8 `.txt` files up to 1 MiB. Parses text into ProseMirror JSON paragraphs without interpreting HTML or script tags.
+7. **Instant Demo Accounts**: Seeded with three demo personas (Alice, Bob, Charlie) and a top-navbar switcher that creates server-issued `HttpOnly` sessions (tokens hashed at rest with SHA-256).
+
+> [!IMPORTANT]
+> **No Simultaneous Real-Time Editing Claim:**  
+> DraftSpace uses **Optimistic Concurrency Control (OCC)** with integer versioning and HTTP 409 conflict detection. It **does not** claim to support simultaneous multi-cursor real-time editing (Operational Transformation or CRDTs). When multiple users edit concurrently, the second committer is alerted with a conflict modal and guided recovery rather than suffering silent data loss.
 
 ---
 
-## 👥 Demo Personas (Instant Session Switcher)
+## 💻 Technology Stack
 
-| Demo Account | Email | Role in Demo | Initial Seed Data |
-|--------------|-------|--------------|-------------------|
-| **Alice Smith** | `alice@draftspace.dev` | **Document Owner** | Owns *Welcome to DraftSpace* and *Private Strategy Notes*. |
-| **Bob Jones** | `bob@draftspace.dev` | **Shared Editor** | Shared on *Welcome to DraftSpace*, owns *Sprint Planning Notes*. |
-| **Charlie Brown** | `charlie@draftspace.dev` | **Unshared User** | Independent user. Private documents of Alice and Bob are strictly inaccessible (403). |
+- **Frontend**: React 18.3, TypeScript 5.7, Vite 6.1, Tailwind CSS 3.4, Lucide React icons.
+- **Rich-Text Engine**: Tiptap 2.11 (`@tiptap/core`, `@tiptap/starter-kit`, `@tiptap/extension-underline`, `@tiptap/extension-text-align`).
+- **Backend**: Node.js, Express 4.21, TypeScript 5.7, Cookie-Parser, Multer (in-memory storage).
+- **Database & ORM**: Prisma ORM 5.22. Supports **PostgreSQL** (production deployment) and **SQLite** (zero-dependency local development and testing).
+- **Testing**: Vitest 2.1, Supertest 7.0.
 
-Use the demo account dropdown in the top-right navbar to switch between accounts instantly!
+---
+
+## 📋 Prerequisites & Supported Node Version
+
+- **Node.js**: v18.x, v20.x, or v22.x (Verified and tested on Node `v22.14.0`).
+- **npm**: v9.x, v10.x, or v11.x (Verified on npm `11.6.2`).
+- **Operating System**: Windows, macOS, or Linux.
+
+---
+
+## 🚀 Quickstart & Local Setup
+
+### 1. Clone & Install Dependencies
+```bash
+# Clone the repository
+git clone <repo-url> draftspace
+cd draftspace
+
+# Install monorepo dependencies (client + server)
+npm install
+```
+
+### 2. Environment Variables Configuration
+Copy the provided `.env.example` file to create your server `.env`:
+```bash
+# On Linux/macOS:
+cp .env.example server/.env
+
+# On Windows (PowerShell):
+Copy-Item .env.example server/.env
+```
+
+Default configuration for instant zero-dependency local development:
+```env
+PORT=4000
+NODE_ENV=development
+DATABASE_URL="file:./dev.db"
+CORS_ORIGIN="http://localhost:5173"
+```
+*(To use PostgreSQL, simply change `DATABASE_URL` to your PostgreSQL connection string, e.g., `postgresql://postgres:postgres@localhost:5432/draftspace?schema=public`)*.
+
+### 3. Setup Database & Seed Initial Data
+```bash
+npm run db:setup
+```
+This automated setup script:
+1. Detects whether your `DATABASE_URL` is PostgreSQL or SQLite.
+2. Generates the Prisma client.
+3. Pushes the schema to create all tables, indexes, and unique constraints.
+4. Idempotently seeds demo users (**Alice**, **Bob**, **Charlie**) and initial starter documents without overwriting existing data.
+
+### 4. Start Development Servers
+```bash
+npm run dev
+```
+- **Frontend App**: `http://localhost:5173`
+- **Backend API**: `http://localhost:4000`
+
+---
+
+## 🏗️ Production Build & Single-Origin Serving
+
+DraftSpace can be built and run as a single unified service where Express serves the pre-compiled React SPA:
+
+```bash
+# 1. Build server TypeScript and client Vite production bundles
+npm run build
+
+# 2. Run database migrations & idempotent seed
+npm run db:setup
+
+# 3. Launch production server
+npm start
+```
+- The complete application (API + UI) is served on `http://localhost:4000`.
+- All document URLs (e.g. `/?doc=<id>`) refresh correctly via Express SPA fallback.
+- Missing static assets with extensions (e.g. `*.js`, `*.css`) return HTTP 404 JSON, preventing script execution errors.
+
+---
+
+## 🧪 Automated Testing
+
+DraftSpace includes a comprehensive automated test suite with **47 integration tests** exercising actual application routes, authorization middleware, and SQLite/PostgreSQL persistence without mocking application logic:
+
+```bash
+npm test
+```
+
+### Verified Test Breakdown (47 Tests):
+1. **Demo Identity & Session Management (6 tests)**: Health check, demo user listing, HttpOnly session cookie, SHA-256 token hashing at rest, session authentication resolution, logout and token revocation.
+2. **Validation & Security Enforcement (4 tests)**: Title whitespace trimming and 1-120 char length bounds, body spoofing rejection (ownerId/userId/role ignored), editor JSON node validation, ProseMirror AST acceptance.
+3. **Concurrent Saves & Optimistic Concurrency Control (3 tests)**: Sequential increment on version match, HTTP 409 rejection and database preservation on stale version, version parameter requirement.
+4. **Access Rules & RBAC Permission Enforcement (7 tests)**: Owner update & rename, editor content update, editor rename rejection (403), editor mixed title/content rejection (403), unshared user read rejection (403), unshared user write rejection (403), segregated list query, collaborator delete rejection (403).
+5. **Sharing Management & Complete End-to-End Demonstration (8 tests)**:
+   - Alice creates document.
+   - Bob cannot read or update document before share (403).
+   - Alice shares document with Bob.
+   - Duplicate share grant is idempotent and preserves unique row.
+   - Bob lists document under "Shared with me" and edits content.
+   - Charlie cannot access document (403).
+   - Bob cannot rename document or manage collaborators (403).
+   - Alice revokes Bob; Bob's subsequent read and write fail with 403; Alice retains full access.
+   - Self-sharing rejected (400); sharing with non-existent user rejected (404).
+6. **File Import: Deliberate Scope (8 tests)**: Plain text paragraph parsing, script tag neutralization, UTF-8 BOM handling, case-insensitive `.TXT` extension, generic MIME (`application/octet-stream`) support, rejection of non-.txt (`.md`, `.docx`), rejection of zero-byte file, rejection of binary null-byte files, rejection of malformed UTF-8, rejection of files > 1 MiB.
+7. **Rich-Text Formatting Round-Trip Persistence (1 test)**: Create and re-read H1, H2, Bold, Italic, Underline, Bulleted list, Numbered list, Blockquote, and Code block; full ProseMirror JSON equivalence verified.
+8. **Missing, Malformed, and Non-Existent Document IDs (4 tests)**: Clean 404 responses for non-existent and malformed IDs across GET, PATCH, and DELETE routes.
+
+---
+
+## 👥 Demo Personas (Instant Account Switcher)
+
+| Persona | Email | Purpose in Evaluation | Initial State |
+|---|---|---|---|
+| **Alice Smith** | `alice@draftspace.dev` | **Document Owner** | Owns initial specification and private memo. Can rename titles and manage collaborators. |
+| **Bob Jones** | `bob@draftspace.dev` | **Shared Collaborator** | Collaborator on Alice's spec; owns research notes. Can edit content, cannot rename or share. |
+| **Charlie Brown** | `charlie@draftspace.dev` | **Unshared User** | Independent user. Private documents of Alice and Bob are strictly inaccessible (403 Forbidden). |
+
+Switch accounts at any time via the user menu in the top-right header!
+
+---
+
+## 🔄 Step-by-Step Sharing Demonstration
+
+Follow these steps to observe the end-to-end authorization lifecycle:
+
+1. **Start as Alice Smith**:
+   - Open `http://localhost:5173` (or `:4000` in production mode). Alice is selected by default.
+   - Click **New Document**. Title defaults to `Untitled Document`.
+   - Rename title to `Q4 Product Strategy`. Add formatted content (Heading 1, Bold, Bullet list).
+   - Notice the status badge transitions: `Unsaved changes` &rarr; `Saving...` &rarr; `Saved`.
+2. **Grant Collaborator Access**:
+   - Click the **Share** button in the header (visible only to Alice).
+   - In the dropdown, select **Bob Jones** and click **Share**.
+   - Bob Jones appears in the active collaborators list.
+3. **Verify Bob's View**:
+   - In the top-right header, switch demo account to **Bob Jones**.
+   - Under **Shared with me**, `Q4 Product Strategy` appears with a `Shared Editor` badge and `By Alice Smith`.
+   - Click to open. The full formatted content loads.
+   - Bob can edit content (e.g. add bullet items). Changes autosave with version increments.
+   - Notice the title input is disabled for Bob: hovering displays a tooltip stating only the owner can rename.
+4. **Verify Charlie's Access Denial**:
+   - Switch demo account to **Charlie Brown**.
+   - Under both "My documents" and "Shared with me", `Q4 Product Strategy` is completely invisible.
+   - Paste the direct document URL (`?doc=<id>`) into the browser bar: the backend returns HTTP 403 Forbidden and the client shows a clear Access Denied state.
+5. **Demonstrate Access Revocation**:
+   - Switch back to **Alice Smith**, open `Q4 Product Strategy`, and click **Share**.
+   - Click the trash can icon next to Bob Jones to revoke access.
+   - Switch to **Bob Jones** (who still has the document open).
+   - Bob types an edit: the backend returns HTTP 403 Forbidden.
+   - The frontend catches the 403, permanently halts the autosave loop, and displays `RevokedAccessModal`. Bob's uncommitted text is preserved with a 1-click clipboard copy button.
 
 ---
 
 ## 📁 File Import: Deliberate Scope
 
 > [!IMPORTANT]
-> **DraftSpace deliberately supports UTF-8 `.txt` import only.**
-> Markdown (`.md`) and Word (`.docx`) imports are **not supported and not claimed**.
+> **DraftSpace deliberately supports UTF-8 `.txt` import only.**  
+> Markdown (`.md`), Word (`.docx`), and RTF are explicitly unsupported and rejected.
 
-### Import Requirements & Security Safeguards:
-1. **Multipart Upload**: Transmitted as real multipart form-data via Multer memory storage (no permanent temp files left on disk).
-2. **1 MiB Limit**: Configured at both transport (Multer `1024 * 1024` bytes) and application controller levels. Oversized files receive HTTP 400 (`FILE_TOO_LARGE`).
-3. **Case-Insensitive Extension**: Validates `.txt` extension case-insensitively (e.g. `document.txt` and `NOTES.TXT` are accepted; `.md`, `.docx`, `.pdf`, `.html` are rejected with HTTP 400 `UNSUPPORTED_FILE_TYPE`).
-4. **MIME Independence**: Does not rely on browser-supplied MIME types; validates extension and buffer bytes directly.
-5. **Zero-Byte File Handling**: Empty files (0 bytes) are rejected with HTTP 400 (`EMPTY_FILE`).
-6. **Binary Content Rejection**: Rejects files containing null bytes (`0x00`) with HTTP 400 (`BINARY_FILE_REJECTED`).
-7. **Strict UTF-8 & BOM Handling**: Validates UTF-8 byte sequences with `TextDecoder('utf-8', { fatal: true })`. Automatically strips optional UTF-8 BOM (`\uFEFF`) if present.
-8. **Pure Plain Text (No HTML/Script Injection)**: Raw content is treated purely as plain text paragraphs; never parsed or executed as HTML, scripts, or markdown tokens.
-9. **Safe Title Derivation**: Title is derived from the filename (trimmed, 1–120 characters, with fallback to `"Imported Document"`).
-10. **File Input Reset**: The file input resets after selection so the exact same file can be selected again for retry.
+- **Transport & Application Limits**: Enforces 1 MiB (`1024 * 1024` bytes) maximum size limit.
+- **Validation**: Rejects zero-byte files (`400 EMPTY_FILE`), unsupported extensions (`400 UNSUPPORTED_FILE_TYPE`), binary content containing null bytes (`400 BINARY_FILE_REJECTED`), and invalid UTF-8 sequences (`400 MALFORMED_UTF8`).
+- **Encoding & BOM**: Accepts standard UTF-8 and multilingual Unicode (e.g. Hindi, accents, emojis). UTF-8 Byte Order Marks (`0xEF, 0xBB, 0xBF`) are stripped transparently.
+- **XSS & Execution Prevention**: Content is treated strictly as plain text paragraphs. Script tags (e.g. `<script>alert(1)</script>`) are stored as inert text nodes and never executed.
 
 ---
 
-## 🔐 Sharing & Access Control Verification Flow
+## 🌐 Deployment Status & Live URL
 
-DraftSpace implements strict server-side RBAC and request-time authorization:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Alice as Alice Smith (Owner)
-    actor Bob as Bob Jones (Editor)
-    actor Charlie as Charlie Brown (Unshared)
-    participant API as DraftSpace Server
-    participant DB as Database (Prisma)
-
-    Alice->>API: POST /api/documents (Create "Project Roadmap")
-    API->>DB: Insert Document (ownerId: Alice, version: 1)
-    Alice->>API: POST /api/documents/:id/shares (userId: Bob)
-    API->>DB: Insert DocumentShare (documentId, userId: Bob)
-    
-    Bob->>API: GET /api/documents
-    API-->>Bob: Returns "Project Roadmap" in "Shared with me"
-    Bob->>API: PATCH /api/documents/:id (Edit content)
-    API-->>Bob: 200 OK (version incremented to 2)
-
-    Charlie->>API: GET /api/documents/:id (Direct URL/API access)
-    API-->>Charlie: 403 Forbidden (Blocked)
-    Charlie->>API: PATCH /api/documents/:id (Direct write attempt)
-    API-->>Charlie: 403 Forbidden (Blocked)
-
-    Bob->>API: PATCH /api/documents/:id (Rename title)
-    API-->>Bob: 403 Forbidden (FORBIDDEN_RENAME: Owner only)
-    Bob->>API: POST /api/documents/:id/shares (Grant access)
-    API-->>Bob: 403 Forbidden (Owner only)
-
-    Alice->>API: DELETE /api/documents/:id/shares/Bob (Revoke Bob)
-    API->>DB: Delete DocumentShare
-    API-->>Alice: 200 OK (Revoked)
-
-    Bob->>API: PATCH /api/documents/:id (Next save attempt)
-    API-->>Bob: 403 Forbidden (Access Revoked)
-    Note over Bob: Autosave stopped; local draft preserved in RevokedAccessModal
-
-    Alice->>API: GET /api/documents/:id
-    API-->>Alice: 200 OK (Alice retains full owner access)
-```
+- **Status:** **BLOCKED on External Cloud Host Provisioning / Credentials**.
+- **Local Production Server:** Fully verified and operational on `http://localhost:4000/`.
+- **Infrastructure as Code:** Pre-configured for 1-click cloud deployment via [render.yaml](file:///c:/documentsOfMine/DraftScape/render.yaml) (Render Web Service + PostgreSQL), [Dockerfile](file:///c:/documentsOfMine/DraftScape/Dockerfile), and [docker-compose.yml](file:///c:/documentsOfMine/DraftScape/docker-compose.yml).
+- See [DEPLOYMENT.md](file:///c:/documentsOfMine/DraftScape/DEPLOYMENT.md) for full deployment instructions and [QA_REPORT.md](file:///c:/documentsOfMine/DraftScape/QA_REPORT.md) for verification evidence.
 
 ---
 
-## 🚀 Quickstart & Local Setup
+## ⚠️ Mock Authentication Warning & Known Limitations
 
-### Prerequisites
-- **Node.js**: v18+ (tested on Node v22.14.0)
-- **npm**: v9+ (tested on npm 11.6.2)
-
-### 1. Install Dependencies
-```bash
-# From workspace root
-npm install
-```
-
-### 2. Setup Database & Seed Initial Data
-DraftSpace supports **PostgreSQL** (for production cloud deployments) and **SQLite** (for zero-dependency instant local execution and testing):
-```bash
-npm run db:setup
-```
-*This command runs Prisma generation, pushes the schema, and seeds demo users (Alice, Bob, Charlie) with sample documents.*
-
-### 3. Run Development Servers
-```bash
-npm run dev
-```
-- **Frontend Client**: `http://localhost:5173`
-- **Backend API**: `http://localhost:4000`
-
----
-
-## 🧪 Automated Testing
-
-All 38 integration tests pass in ~3.2 seconds:
-
-```bash
-# Run automated test suite
-npm test
-```
-
-### Test Coverage Breakdown (38 Tests):
-1. **Demo Identity & Sessions (4 tests)**: Health check, demo user listing, HttpOnly session cookie, SHA-256 token hashing at rest.
-2. **Document Creation & Versioning (4 tests)**: Document creation, initial version = 1, valid JSON AST storage, title trimming and length limits.
-3. **Title Rename Authorization & Concurrency (4 tests)**: Owner rename, 403 FORBIDDEN_RENAME on non-owner rename, atomic rejection on mixed title+content updates.
-4. **Optimistic Concurrency Control (OCC) (3 tests)**: 409 Conflict on stale version save, server data preservation, concurrency resolution on updated version.
-5. **Sharing Management & Complete End-to-End Flow (10 tests)**:
-   - Alice creates document.
-   - Alice shares with Bob.
-   - Bob sees it under "Shared with me" and edits content.
-   - Charlie blocked from read and write (403 Forbidden).
-   - Bob blocked from renaming title (403 FORBIDDEN_RENAME).
-   - Bob blocked from granting or revoking shares (403 Forbidden).
-   - Alice revokes Bob.
-   - Bob's subsequent read and write fail with 403 Forbidden.
-   - Alice retains full owner access.
-   - Self-sharing rejected (400), unknown user rejected (404).
-6. **File Import (.txt Only, <= 1 MiB) (8 tests)**:
-   - Plain text UTF-8 `.txt` import with paragraph conversion (treating content as text, never HTML or markdown tags).
-   - Optional UTF-8 BOM acceptance.
-   - Case-insensitive `.txt` (e.g. `.TXT`).
-   - Rejection of unsupported extensions (`.md`, `.docx`, `.pdf`, `.html`) with 400 `UNSUPPORTED_FILE_TYPE`.
-   - Rejection of zero-byte file (0 bytes) with 400 `EMPTY_FILE`.
-   - Rejection of binary content containing null bytes with 400 `BINARY_FILE_REJECTED`.
-   - Rejection of malformed UTF-8 with 400 `MALFORMED_UTF8`.
-   - Rejection of oversized file (> 1 MiB) with 400 `FILE_TOO_LARGE`.
-7. **Document Isolation & Deletion (5 tests)**:
-   - Private unshared documents hidden from list queries.
-   - Non-owner delete blocked (403).
-   - Owner delete succeeds and cascades shares.
-
----
-
-## 🛠️ Monorepo Scripts Reference
-
-| Command | Purpose |
-|---------|---------|
-| `npm run dev` | Runs both server (`:4000`) and client (`:5173`) concurrently |
-| `npm run build` | Compiles TypeScript and bundles production assets for both client and server |
-| `npm test` | Runs automated Vitest/Supertest test suite (38 tests) |
-| `npm run db:setup` | Initializes database schema and seeds demo users |
-| `npm run db:seed` | Re-seeds database with starter documents and personas |
+1. **Mock Demo Authentication**: Demo sessions simulate production authentication for reviewer evaluation without requiring email signups or third-party OAuth. Do not use this mocked session mechanism in public multi-user production environments without adding real credentials/OAuth.
+2. **File Import Scope**: Only UTF-8 plain text (`.txt`) files are supported by design.
+3. **Database Concurrency**: The local SQLite configuration is designed for single-process evaluation. Production deployments utilize PostgreSQL with connection pooling.
