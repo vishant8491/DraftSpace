@@ -13,15 +13,20 @@ import {
   UploadCloud,
   LogOut,
   Info,
+  RotateCcw,
 } from 'lucide-react';
+
+export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error' | 'conflict';
 
 interface NavbarProps {
   currentDocument?: DocumentItem | null;
   onBackToDashboard?: () => void;
   onOpenShareModal?: () => void;
   onOpenImportModal?: () => void;
-  saveStatus?: 'saved' | 'saving' | 'unsaved' | 'conflict';
+  saveStatus?: SaveStatus;
   onManualSave?: () => void;
+  onRetrySave?: () => void;
+  onOpenConflictModal?: () => void;
   onTitleChange?: (newTitle: string) => void;
   onTitleBlur?: () => void;
 }
@@ -33,6 +38,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenImportModal,
   saveStatus = 'saved',
   onManualSave,
+  onRetrySave,
+  onOpenConflictModal,
   onTitleChange,
   onTitleBlur,
 }) => {
@@ -40,7 +47,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -54,25 +60,35 @@ export const Navbar: React.FC<NavbarProps> = ({
   const isOwner = currentDocument && currentUser?.id === currentDocument.ownerId;
 
   return (
-    <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-4 py-2.5 flex items-center justify-between shadow-xs">
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-3 sm:px-5 py-2.5 flex items-center justify-between shadow-xs">
       {/* Left Section: Logo & Document Title */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 sm:gap-4 min-w-0">
         {currentDocument ? (
           <button
+            type="button"
             onClick={onBackToDashboard}
+            aria-label="Back to documents dashboard"
             title="Back to all documents"
-            className="p-1.5 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-1.5 text-sm font-medium"
+            className="p-1.5 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-1.5 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 flex-shrink-0" />
             <span className="hidden sm:inline">Docs</span>
           </button>
         ) : (
-          <div className="flex items-center gap-2.5 cursor-pointer" onClick={onBackToDashboard}>
-            <div className="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white shadow-sm">
+          <div
+            className="flex items-center gap-2 cursor-pointer focus:outline-none"
+            onClick={onBackToDashboard}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onBackToDashboard?.();
+            }}
+          >
+            <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-white shadow-xs flex-shrink-0">
               <FileText className="w-4 h-4" />
             </div>
             <div className="flex flex-col">
-              <span className="font-bold text-slate-900 tracking-tight text-lg leading-tight">
+              <span className="font-bold text-slate-900 tracking-tight text-base sm:text-lg leading-tight">
                 Draft<span className="text-brand-600">Space</span>
               </span>
             </div>
@@ -81,8 +97,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* In-Editor Title Input, Version, and Save Status */}
         {currentDocument && (
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
               <input
                 type="text"
                 value={currentDocument.title}
@@ -94,45 +110,77 @@ export const Navbar: React.FC<NavbarProps> = ({
                     (e.target as HTMLInputElement).blur();
                   }
                 }}
-                title={isOwner ? 'Click to rename document' : 'Only the document owner can rename this document'}
-                className={`text-base sm:text-lg font-semibold px-2 py-0.5 rounded border transition-all truncate max-w-[200px] sm:max-w-md ${
+                aria-label="Document Title"
+                title={
+                  isOwner
+                    ? 'Click to rename document'
+                    : 'Only the document owner can rename this document'
+                }
+                className={`text-sm sm:text-base font-semibold px-2 py-0.5 rounded border transition-all truncate max-w-[140px] sm:max-w-xs md:max-w-md ${
                   isOwner
                     ? 'text-slate-900 bg-transparent hover:bg-slate-50 focus:bg-white border-transparent hover:border-slate-300 focus:border-brand-500 focus:outline-none'
-                    : 'text-slate-700 bg-slate-100/60 border-transparent cursor-not-allowed'
+                    : 'text-slate-600 bg-slate-100/70 border-transparent cursor-not-allowed'
                 }`}
               />
 
-              {/* Version Badge for Optimistic Concurrency */}
-              <span className="text-[11px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded border border-slate-200">
+              <span
+                title={`Optimistic Concurrency Version ${currentDocument.version}`}
+                className="text-[10px] sm:text-[11px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded border border-slate-200 flex-shrink-0"
+              >
                 v{currentDocument.version}
               </span>
             </div>
 
-            {/* Save Status Pill */}
-            <div className="flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full select-none">
+            {/* Save Status Announcement */}
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-1.5 text-xs font-medium select-none flex-shrink-0"
+            >
               {saveStatus === 'saved' && (
                 <span className="text-emerald-600 flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Saved to DB</span>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden md:inline">Saved</span>
                 </span>
               )}
+
               {saveStatus === 'saving' && (
                 <span className="text-brand-600 flex items-center gap-1">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Saving...</span>
+                  <span className="hidden md:inline">Saving...</span>
                 </span>
               )}
+
               {saveStatus === 'unsaved' && (
                 <span className="text-amber-600 flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                  <span>Unsaved changes</span>
+                  <span className="hidden md:inline">Unsaved</span>
                 </span>
               )}
+
+              {saveStatus === 'error' && (
+                <div className="flex items-center gap-1.5 text-rose-600">
+                  <span className="hidden md:inline">Save failed</span>
+                  <button
+                    type="button"
+                    onClick={onRetrySave}
+                    className="px-2 py-0.5 text-[11px] font-semibold bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              )}
+
               {saveStatus === 'conflict' && (
-                <span className="text-rose-600 font-semibold flex items-center gap-1 animate-bounce">
-                  <AlertTriangle className="w-3.5 h-3.5" />
+                <button
+                  type="button"
+                  onClick={onOpenConflictModal}
+                  className="px-2 py-0.5 text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800 rounded-md flex items-center gap-1 animate-pulse"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                   <span>Conflict (409)</span>
-                </span>
+                </button>
               )}
             </div>
           </div>
@@ -140,28 +188,30 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Right Section: Actions & Demo Account Switcher */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
         {/* Editor Actions */}
         {currentDocument && (
           <>
             {onManualSave && (
               <button
+                type="button"
                 onClick={onManualSave}
                 disabled={saveStatus === 'saved' || saveStatus === 'saving'}
-                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors"
-                title="Save document now (Ctrl+S)"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+                title="Save changes (Ctrl+S)"
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>Save</span>
               </button>
             )}
 
-            {/* Share Button (Owner only or View info) */}
+            {/* Share Button (Owner only has action, collaborator has view) */}
             <button
+              type="button"
               onClick={onOpenShareModal}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition-colors shadow-xs ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 ${
                 isOwner
-                  ? 'bg-brand-600 hover:bg-brand-700 text-white'
+                  ? 'bg-slate-900 hover:bg-slate-800 text-white shadow-xs'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
               }`}
             >
@@ -179,8 +229,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Global Import Action on Dashboard */}
         {!currentDocument && onOpenImportModal && (
           <button
+            type="button"
             onClick={onOpenImportModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-700 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-700 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <UploadCloud className="w-4 h-4 text-slate-500" />
             <span className="hidden sm:inline">Import .txt</span>
@@ -190,14 +241,17 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Explicit Demo Account Chooser */}
         <div className="relative" ref={dropdownRef}>
           <button
+            type="button"
             onClick={() => setUserDropdownOpen(!userDropdownOpen)}
-            className="flex items-center gap-2 pl-2 pr-2.5 py-1 rounded-full border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all bg-white"
-            title="Explicit Demo Account Chooser"
+            aria-expanded={userDropdownOpen}
+            aria-haspopup="true"
+            aria-label="Active Demo Account Chooser"
+            className="flex items-center gap-2 pl-2 pr-2.5 py-1 rounded-full border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <div className="w-7 h-7 rounded-full bg-brand-600 text-white font-bold text-xs flex items-center justify-center">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-800 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">
               {currentUser?.displayName?.charAt(0) || 'U'}
             </div>
-            <div className="hidden sm:flex flex-col text-left">
+            <div className="hidden md:flex flex-col text-left">
               <span className="text-xs font-semibold text-slate-800 leading-none">
                 {currentUser?.displayName || 'Loading...'}
               </span>
@@ -210,14 +264,14 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* User Switcher Dropdown Menu */}
           {userDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-fadeIn">
+            <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-fadeIn">
               <div className="px-4 py-2 border-b border-slate-100 bg-amber-50/50">
                 <div className="flex items-center gap-1.5 text-amber-900 font-semibold text-xs">
-                  <Info className="w-3.5 h-3.5 text-amber-600" />
+                  <Info className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
                   <span>Mocked Demo Authentication</span>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  Select a seeded account to receive a real server-issued session cookie:
+                  Choose an account to receive a server-issued session:
                 </p>
               </div>
 
@@ -227,6 +281,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   return (
                     <button
                       key={user.id}
+                      type="button"
                       onClick={() => {
                         switchUser(user.id);
                         setUserDropdownOpen(false);
@@ -262,13 +317,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
 
               <div className="px-4 py-2 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
-                <span>HttpOnly Cookie Session</span>
+                <span>HttpOnly Session</span>
                 <button
+                  type="button"
                   onClick={() => {
                     logout();
                     setUserDropdownOpen(false);
                   }}
-                  className="flex items-center gap-1 text-rose-600 hover:text-rose-700 font-medium"
+                  className="flex items-center gap-1 text-rose-600 hover:text-rose-700 font-medium focus:outline-none"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Logout</span>

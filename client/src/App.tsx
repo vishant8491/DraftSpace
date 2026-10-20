@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { Navbar } from './components/Navbar';
+import { Navbar, SaveStatus } from './components/Navbar';
 import { Dashboard } from './components/Dashboard';
 import { TiptapEditor } from './components/TiptapEditor';
 import { ShareModal } from './components/ShareModal';
 import { ImportModal } from './components/ImportModal';
+import { ConflictModal } from './components/ConflictModal';
+import { UnsavedChangesModal } from './components/UnsavedChangesModal';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { DocumentItem } from './types';
 import { api } from './api/client';
@@ -15,132 +17,330 @@ export const MainContent: React.FC = () => {
   const [sharedDocs, setSharedDocs] = useState<DocumentItem[]>([]);
   const [currentDocument, setCurrentDocument] = useState<DocumentItem | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
+  const [error, setError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
+
+  // Modals state
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
+  const [isConflictModalOpen, setIsConflictModalOpen] = useState<boolean>(false);
+  const [conflictServerVersion, setConflictServerVersion] = useState<number>(1);
+  const [pendingNavigationAction, setPendingNavigationAction] = useState<(() => void) | null>(null);
+  const [isUnsavedModalOpen, setIsUnsavedModalOpen] = useState<boolean>(false);
+
+  // Notifications
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  // State refs for save serialization and cancellation
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSaveDataRef = useRef<{ title?: string; content?: any } | null>(null);
+  const isSavingRef = useRef<boolean>(false);
+  const hasPendingEditsRef = useRef<boolean>(false);
+  const pendingDataRef = useRef<{ title?: string; content?: any }>({});
+  const editRevisionRef = useRef<number>(0);
+  const savedRevisionRef = useRef<number>(0);
+  const currentDocRef = useRef<DocumentItem | null>(null);
+  const loadRequestIdRef = useRef<number>(0);
+
+  currentDocRef.current = currentDocument;
 
   const addToast = (type: 'success' | 'error' | 'info', text: string) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, text }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, 4500);
   };
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Load documents for active user
+  // Dedicated URL parser: extracts docId from #/document/:id or /document/:id
+  const getDocumentIdFromUrl = (): string | null => {
+    const hash = window.location.hash;
+    const match = hash.match(/#\/document\/([a-zA-Z0-9_-]+)/);
+    if (match && match[1]) return match[1];
+
+    const path = window.location.pathname;
+    const pathMatch = path.match(/\/document\/([a-zA-Z0-9_-]+)/);
+    if (pathMatch && pathMatch[1]) return pathMatch[1];
+
+    return null;
+  };
+
+  // URL updater
+  const updateUrl = (docId: string | null) => {
+    if (docId) {
+      if (window.location.hash !== `#/document/${docId}`) {
+        window.history.pushState(null, '', `#/document/${docId}`);
+      }
+    } else {
+      if (window.location.hash && window.location.hash !== '#/' && window.location.hash !== '') {
+        window.history.pushState(null, '', '#/');
+      }
+    }
+  };
+
+  // Load documents for current user
   const loadDocuments = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await api.listDocuments();
       setOwnedDocs(res.owned);
       setSharedDocs(res.shared);
     } catch (err: any) {
       console.error('Failed to load documents:', err);
+      setError(err.message || 'Failed to load documents');
       addToast('error', err.message || 'Failed to load documents');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (currentUser) {
-      loadDocuments();
-      // Return to dashboard when user switches
-      setCurrentDocument(null);
-    }
-  }, [loadDocuments, currentUser?.id]);
+  // Fetch a document by ID with stale load cancellation
+  const fetchAndOpenDocument = useCallback(
+    async (id: string) => {
+      const requestId = ++loadRequestIdRef.current;
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await api.getDocument(id);
 
-  // Execute Save with Optimistic Concurrency Control
-  const performSave = async (id: string, version: number, data: { title?: string; content?: any }) => {
+        // Cancel if a newer load request arrived
+        if (requestId !== loadRequestIdRef.current) return;
+
+        setCurrentDocument({
+          ...res.document,
+          role: res.role,
+          version: res.version,
+        });
+        setSaveStatus('saved');
+        pendingDataRef.current = {};
+        hasPendingEditsRef.current = false;
+        editRevisionRef.current = 0;
+        savedRevisionRef.current = 0;
+        updateUrl(id);
+      } catch (err: any) {
+        if (requestId !== loadRequestIdRef.current) return;
+        console.error('Failed to open document:', err);
+        setError(err.message || 'Unable to open document');
+        addToast('error', err.message || 'Unable to open document');
+        updateUrl(null);
+        setCurrentDocument(null);
+      } finally {
+        if (requestId === loadRequestIdRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  // Synchronize on load and user change
+  useEffect(() => {
+    if (!currentUser) return;
+
+    // Reset pending editor state safely when switching accounts
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    isSavingRef.current = false;
+    hasPendingEditsRef.current = false;
+    pendingDataRef.current = {};
+    editRevisionRef.current = 0;
+    savedRevisionRef.current = 0;
+
+    loadDocuments();
+
+    // Check if initial URL points to a document
+    const initialDocId = getDocumentIdFromUrl();
+    if (initialDocId) {
+      fetchAndOpenDocument(initialDocId);
+    } else {
+      setCurrentDocument(null);
+      updateUrl(null);
+    }
+  }, [currentUser?.id, fetchAndOpenDocument, loadDocuments]);
+
+  // Handle browser Back/Forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const docId = getDocumentIdFromUrl();
+      if (docId) {
+        if (currentDocRef.current?.id !== docId) {
+          fetchAndOpenDocument(docId);
+        }
+      } else {
+        setCurrentDocument(null);
+        loadDocuments();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('hashchange', handlePopState);
+    };
+  }, [fetchAndOpenDocument, loadDocuments]);
+
+  // Warn before browser tab close/reload if unsaved
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasPendingEditsRef.current || saveStatus === 'unsaved' || saveStatus === 'conflict') {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes.';
+        return 'You have unsaved changes.';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveStatus]);
+
+  // Serialized Save Engine: executes one save at a time against current version
+  const executeSave = async (overrideVersion?: number): Promise<boolean> => {
+    const doc = currentDocRef.current;
+    if (!doc) return false;
+
+    // Concurrency lock: do not launch overlapping requests
+    if (isSavingRef.current) {
+      hasPendingEditsRef.current = true;
+      return false;
+    }
+
+    const payload = { ...pendingDataRef.current };
+    if (!payload.title && !payload.content) {
+      setSaveStatus('saved');
+      return true;
+    }
+
+    const versionToUse = overrideVersion !== undefined ? overrideVersion : doc.version;
+    const revisionAtSaveStart = editRevisionRef.current;
+
     try {
+      isSavingRef.current = true;
       setSaveStatus('saving');
-      const res = await api.updateDocument(id, {
-        version,
-        ...data,
+
+      const res = await api.updateDocument(doc.id, {
+        version: versionToUse,
+        ...payload,
       });
 
+      // Acknowledged by backend
       setCurrentDocument((prev) =>
-        prev && prev.id === id ? { ...prev, ...res.document, version: res.version } : prev
+        prev && prev.id === doc.id
+          ? {
+              ...prev,
+              ...res.document,
+              version: res.version,
+            }
+          : prev
       );
-      setSaveStatus('saved');
-      pendingSaveDataRef.current = null;
+
+      savedRevisionRef.current = revisionAtSaveStart;
+
+      // Check if newer edits occurred while request was in-flight
+      if (editRevisionRef.current > revisionAtSaveStart) {
+        setSaveStatus('unsaved');
+        hasPendingEditsRef.current = true;
+        // Schedule next debounced save with incremented version
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = setTimeout(() => {
+          executeSave(res.version);
+        }, 800);
+      } else {
+        setSaveStatus('saved');
+        hasPendingEditsRef.current = false;
+        pendingDataRef.current = {};
+      }
+
+      return true;
     } catch (err: any) {
       if (err.status === 409 || err.code === 'CONCURRENCY_CONFLICT') {
         setSaveStatus('conflict');
-        addToast(
-          'error',
-          'Concurrency Conflict (409): Modified by another session. Please reload before saving.'
-        );
+        if (err.currentVersion) {
+          setConflictServerVersion(err.currentVersion);
+        }
+        setIsConflictModalOpen(true);
       } else {
-        setSaveStatus('unsaved');
-        addToast('error', err.message || 'Failed to save changes');
+        setSaveStatus('error');
+        addToast('error', err.message || 'Failed to save changes.');
       }
+      return false;
+    } finally {
+      isSavingRef.current = false;
     }
   };
 
-  // Debounced auto-save handler for editor content changes
+  // Debounced auto-save handler for editor content changes (800ms debounce)
   const handleContentChange = (newJsonContent: any) => {
     if (!currentDocument) return;
 
-    setCurrentDocument((prev) => (prev ? { ...prev, content: newJsonContent } : null));
+    editRevisionRef.current++;
+    hasPendingEditsRef.current = true;
     setSaveStatus('unsaved');
 
-    pendingSaveDataRef.current = {
-      ...(pendingSaveDataRef.current || {}),
-      content: newJsonContent,
-    };
+    pendingDataRef.current.content = newJsonContent;
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
 
+    // Stop autosaving if in conflict mode
+    if (saveStatus === 'conflict') return;
+
     autoSaveTimerRef.current = setTimeout(() => {
-      if (currentDocument && pendingSaveDataRef.current) {
-        performSave(currentDocument.id, currentDocument.version, pendingSaveDataRef.current);
-      }
-    }, 1200);
+      executeSave();
+    }, 800);
   };
 
   // Title change handler (Owner only)
   const handleTitleChange = (newTitle: string) => {
     if (!currentDocument || currentDocument.ownerId !== currentUser?.id) return;
 
-    setCurrentDocument((prev) => (prev ? { ...prev, title: newTitle } : null));
+    editRevisionRef.current++;
+    hasPendingEditsRef.current = true;
     setSaveStatus('unsaved');
-    pendingSaveDataRef.current = {
-      ...(pendingSaveDataRef.current || {}),
-      title: newTitle,
-    };
+
+    setCurrentDocument((prev) => (prev ? { ...prev, title: newTitle } : null));
+    pendingDataRef.current.title = newTitle;
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    if (saveStatus === 'conflict') return;
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      executeSave();
+    }, 800);
   };
 
   // Title blur immediate save
   const handleTitleBlur = () => {
-    if (!currentDocument || currentDocument.ownerId !== currentUser?.id || !pendingSaveDataRef.current) return;
+    if (!currentDocument || currentDocument.ownerId !== currentUser?.id) return;
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
-    performSave(currentDocument.id, currentDocument.version, pendingSaveDataRef.current);
+    if (saveStatus !== 'conflict' && hasPendingEditsRef.current) {
+      executeSave();
+    }
   };
 
-  // Manual save (Ctrl+S or button)
+  // Manual save action (Ctrl+S or Save button)
   const handleManualSave = () => {
     if (!currentDocument) return;
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
-    const dataToSave = pendingSaveDataRef.current || {
-      title: currentDocument.title,
-      content: currentDocument.content,
-    };
-    performSave(currentDocument.id, currentDocument.version, dataToSave);
+    executeSave();
+  };
+
+  // Retry save
+  const handleRetrySave = () => {
+    executeSave();
   };
 
   // Keyboard shortcut Ctrl+S
@@ -153,26 +353,53 @@ export const MainContent: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentDocument]);
+  });
 
-  // Open Document
-  const handleOpenDocument = async (doc: DocumentItem) => {
-    try {
-      setLoading(true);
-      const res = await api.getDocument(doc.id);
-      setCurrentDocument({
-        ...res.document,
-        role: res.role,
-        version: res.version,
-      });
-      setSaveStatus('saved');
-      pendingSaveDataRef.current = null;
-    } catch (err: any) {
-      console.error('Error fetching document details:', err);
-      addToast('error', err.message || 'Unable to open document');
-    } finally {
-      setLoading(false);
+  // Navigation Guard: check for unsaved edits before navigating
+  const attemptNavigation = (action: () => void) => {
+    if (hasPendingEditsRef.current || saveStatus === 'unsaved' || saveStatus === 'conflict') {
+      setPendingNavigationAction(() => action);
+      setIsUnsavedModalOpen(true);
+    } else {
+      action();
     }
+  };
+
+  const handleConfirmSaveAndLeave = async () => {
+    setIsUnsavedModalOpen(false);
+    const success = await executeSave();
+    if (success) {
+      pendingNavigationAction?.();
+    } else {
+      addToast('error', 'Save was not acknowledged. Remaining on document.');
+    }
+    setPendingNavigationAction(null);
+  };
+
+  const handleConfirmDiscardAndLeave = () => {
+    setIsUnsavedModalOpen(false);
+    hasPendingEditsRef.current = false;
+    pendingDataRef.current = {};
+    setSaveStatus('saved');
+    pendingNavigationAction?.();
+    setPendingNavigationAction(null);
+  };
+
+  // Open Document from dashboard
+  const handleOpenDocument = (doc: DocumentItem) => {
+    attemptNavigation(() => {
+      fetchAndOpenDocument(doc.id);
+    });
+  };
+
+  // Return to Dashboard
+  const handleBackToDashboard = () => {
+    attemptNavigation(() => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      setCurrentDocument(null);
+      updateUrl(null);
+      loadDocuments();
+    });
   };
 
   // Create New Document
@@ -185,6 +412,7 @@ export const MainContent: React.FC = () => {
       addToast('success', 'New document created');
       await loadDocuments();
       setCurrentDocument(res.document);
+      updateUrl(res.document.id);
       setSaveStatus('saved');
     } catch (err: any) {
       addToast('error', err.message || 'Failed to create document');
@@ -201,6 +429,7 @@ export const MainContent: React.FC = () => {
       await loadDocuments();
       if (currentDocument?.id === id) {
         setCurrentDocument(null);
+        updateUrl(null);
       }
     } catch (err: any) {
       addToast('error', err.message || 'Failed to delete document');
@@ -212,24 +441,48 @@ export const MainContent: React.FC = () => {
     addToast('success', `Imported "${newDoc.title}"`);
     loadDocuments();
     setCurrentDocument(newDoc);
+    updateUrl(newDoc.id);
+  };
+
+  // 409 Conflict Recovery Actions
+  const handleCopyDraft = () => {
+    try {
+      const text = JSON.stringify(pendingDataRef.current.content || currentDocument?.content, null, 2);
+      navigator.clipboard.writeText(text);
+      addToast('success', 'Draft content copied to clipboard');
+    } catch {
+      addToast('info', 'Please manually select and copy your text.');
+    }
+  };
+
+  const handleReloadServerVersion = async () => {
+    setIsConflictModalOpen(false);
+    if (currentDocument) {
+      await fetchAndOpenDocument(currentDocument.id);
+      addToast('info', 'Loaded latest server version.');
+    }
+  };
+
+  const handleForceOverwrite = async () => {
+    setIsConflictModalOpen(false);
+    const success = await executeSave(conflictServerVersion);
+    if (success) {
+      addToast('success', `Changes saved to version v${conflictServerVersion + 1}`);
+    }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      {/* Top Navigation */}
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-100 selection:text-brand-900">
+      {/* Top Workspace Header */}
       <Navbar
         currentDocument={currentDocument}
-        onBackToDashboard={() => {
-          if (pendingSaveDataRef.current && currentDocument) {
-            performSave(currentDocument.id, currentDocument.version, pendingSaveDataRef.current);
-          }
-          setCurrentDocument(null);
-          loadDocuments();
-        }}
+        onBackToDashboard={handleBackToDashboard}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenImportModal={() => setIsImportModalOpen(true)}
         saveStatus={saveStatus}
         onManualSave={handleManualSave}
+        onRetrySave={handleRetrySave}
+        onOpenConflictModal={() => setIsConflictModalOpen(true)}
         onTitleChange={handleTitleChange}
         onTitleBlur={handleTitleBlur}
       />
@@ -242,7 +495,7 @@ export const MainContent: React.FC = () => {
             documentId={currentDocument.id}
             content={currentDocument.content}
             onChange={handleContentChange}
-            editable={true} // Shared editors and owners can edit content; title is owner-locked in header
+            editable={true} // Shared editors and owners can edit content
           />
         ) : (
           <Dashboard
@@ -257,11 +510,13 @@ export const MainContent: React.FC = () => {
             }}
             onDeleteDocument={handleDeleteDocument}
             loading={loading}
+            error={error}
+            onRetry={loadDocuments}
           />
         )}
       </main>
 
-      {/* Share Modal */}
+      {/* Share Modal (Owner Only) */}
       {currentDocument && isShareModalOpen && (
         <ShareModal
           document={currentDocument}
@@ -271,7 +526,9 @@ export const MainContent: React.FC = () => {
             loadDocuments();
             if (currentDocument) {
               api.getDocument(currentDocument.id).then((res) => {
-                setCurrentDocument({ ...res.document, role: res.role, version: res.version });
+                setCurrentDocument((prev) =>
+                  prev ? { ...prev, ...res.document, role: res.role, version: res.version } : null
+                );
               });
             }
           }}
@@ -283,6 +540,28 @@ export const MainContent: React.FC = () => {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onImportSuccess={handleImportSuccess}
+      />
+
+      {/* 409 Conflict Recovery Modal */}
+      <ConflictModal
+        isOpen={isConflictModalOpen}
+        onClose={() => setIsConflictModalOpen(false)}
+        onCopyDraft={handleCopyDraft}
+        onReloadServerVersion={handleReloadServerVersion}
+        onForceOverwrite={handleForceOverwrite}
+        serverVersion={conflictServerVersion}
+      />
+
+      {/* Unsaved Changes Warning Modal */}
+      <UnsavedChangesModal
+        isOpen={isUnsavedModalOpen}
+        onSaveAndProceed={handleConfirmSaveAndLeave}
+        onDiscardAndProceed={handleConfirmDiscardAndLeave}
+        onCancel={() => {
+          setIsUnsavedModalOpen(false);
+          setPendingNavigationAction(null);
+        }}
+        saving={saveStatus === 'saving'}
       />
 
       {/* Toast Notifications */}

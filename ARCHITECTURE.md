@@ -176,3 +176,38 @@ The backend schema validator (`server/src/utils/editorValidator.ts`) enforces:
 2. Converts raw text lines, markdown headings (`#`, `##`, `###`), and lists (`-`, `1.`) into a valid Tiptap ProseMirror document JSON structure.
 3. Derives document title from the filename (trimmed, 1–120 characters).
 4. Persists the document in the database owned by the active user with initial `version = 1`.
+
+---
+
+## 8. Frontend Architecture, Save Engine & Concurrency Recovery
+
+### Serialized Save Engine & Revision Tracking
+1. **Debounce & Concurrency Mutex**:
+   - Edits are debounced by 800ms to minimize network traffic while maintaining responsive persistence.
+   - `isSavingRef` acts as a concurrency mutex: if a save is in-flight, subsequent edits are flagged dirty (`hasPendingEditsRef = true`) rather than firing overlapping network writes against the same version.
+2. **Revision Tracking**:
+   - `editRevisionRef` increments on every keystroke.
+   - When an in-flight save completes, if `editRevisionRef > revisionAtSaveStart`, the state remains `unsaved` and schedules an immediate follow-up save against the newly acknowledged server version.
+3. **Caret Position Preservation**:
+   - `TiptapEditor.tsx` isolates `editor.commands.setContent()` strictly to `documentId` transitions.
+   - Normal autosaves update the local document metadata and version number in React state without calling `setContent()`, completely preventing caret jumps to position 0 during typing.
+
+### 409 Conflict Recovery Flow
+1. If a concurrent save returns HTTP 409, the client transitions `saveStatus` to `'conflict'`.
+2. Autosave is stopped immediately, and the local draft is preserved in memory.
+3. The `ConflictModal` provides three explicit recovery paths:
+   - **Copy Local Draft**: Copies local JSON/text to the clipboard for manual merge safety.
+   - **Reload Server Version**: Discards the conflicting draft and pulls the latest acknowledged server content.
+   - **Force Overwrite**: Explicitly sends the draft with the newly reported server version (`conflictServerVersion`).
+
+### Navigation & Unsaved Changes Guard
+- In-app document switches trigger `attemptNavigation()`: if dirty edits exist, an accessible warning dialog prompts the user to either **Save & Proceed**, **Discard Changes & Leave**, or **Stay Here**.
+- Tab closing or browser reloads trigger `window.beforeunload` warning prompts when unsaved edits are dirty.
+- When switching demo accounts, pending editor state and timers are purged cleanly to prevent data leakage between sessions.
+
+### Accessibility (a11y) & Responsive Design
+- Screen-reader announcements (`role="status"`, `aria-live="polite"`) for save transitions (`Saved`, `Saving...`, `Unsaved`, `Save failed`, `Conflict`).
+- All interactive controls use semantic `<button>` elements with clear `aria-label`, visible keyboard focus rings (`focus:ring-brand-500`), and `aria-pressed` toggles on formatting tools.
+- Modals implement keyboard focus traps, `Escape`-to-close listeners, and backdrop click dismissal.
+- Full responsive support from 360px mobile viewports (wrapping toolbar, hidden non-essential icons) to tablet (768px) and wide desktop canvases.
+

@@ -27,12 +27,20 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   const isOwner = currentUser?.id === document.ownerId;
 
-  // Load active shares
+  // Load active shares and listen for Escape key
   useEffect(() => {
     if (isOpen && isOwner) {
       loadShares();
     }
-  }, [isOpen, document.id, isOwner]);
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, document.id, isOwner, onClose]);
 
   const loadShares = async () => {
     try {
