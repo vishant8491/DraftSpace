@@ -126,7 +126,7 @@ npm test
 ## 10. Walkthrough Video Location
 
 - Walkthrough script: [WALKTHROUGH_SCRIPT.md](file:///c:/documentsOfMine/DraftScape/WALKTHROUGH_SCRIPT.md)
-- Walkthrough URL: [WALKTHROUGH_URL.txt](file:///c:/documentsOfMine/DraftScape/WALKTHROUGH_URL.txt) *(Currently pending recording by reviewer/user)*
+- Walkthrough URL: [Google Drive Video](https://drive.google.com/file/d/11unSK7yo8pizl3ncvs9lCFsjYqmYa3X7/view?usp=drive_link) (Recorded & Verified)
 
 ---
 

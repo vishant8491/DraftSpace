@@ -1,9 +1,9 @@
 # DraftSpace — Walkthrough Video Recording Link
 
-STATUS: PENDING RECORDING
+STATUS: RECORDED & LINKED
 
 [INSTRUCTIONS FOR CANDIDATE / USER]
 Record your 3–5 minute screen walkthrough following the timed outline in WALKTHROUGH_SCRIPT.md.
 Upload the video to Loom, YouTube (Unlisted), or Google Drive (public link), and replace this text with your actual URL below:
 
-WALKTHROUGH_URL: <PASTE_YOUR_PUBLIC_RECORDING_URL_HERE>
+WALKTHROUGH_URL: https://drive.google.com/file/d/11unSK7yo8pizl3ncvs9lCFsjYqmYa3X7/view?usp=drive_link
