@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply min-h-screen bg-slate-100 text-slate-900;
+  }
+}
+
+/* Custom styles for Tiptap editor */
+.tiptap {
+  outline: none;
+  min-height: 750px;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  color: #94a3b8;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.tiptap h1 {
+  @apply text-3xl font-bold tracking-tight text-slate-900 mt-6 mb-3;
+}
+
+.tiptap h2 {
+  @apply text-2xl font-semibold tracking-tight text-slate-900 mt-5 mb-2;
+}
+
+.tiptap h3 {
+  @apply text-xl font-medium tracking-tight text-slate-900 mt-4 mb-2;
+}
+
+.tiptap p {
+  @apply text-base leading-relaxed text-slate-800 mb-3;
+}
+
+.tiptap ul {
+  @apply list-disc list-outside pl-6 mb-3 space-y-1;
+}
+
+.tiptap ol {
+  @apply list-decimal list-outside pl-6 mb-3 space-y-1;
+}
+
+.tiptap li {
+  @apply text-base leading-relaxed text-slate-800;
+}
+
+.tiptap blockquote {
+  @apply border-l-4 border-brand-500 pl-4 py-1 my-3 text-slate-600 italic bg-brand-50/40 rounded-r;
+}
+
+.tiptap hr {
+  @apply border-t border-slate-200 my-6;
+}
+
+.tiptap pre {
+  @apply bg-slate-900 text-slate-100 p-4 rounded-lg font-mono text-sm my-3 overflow-x-auto;
+}
+
+.tiptap code {
+  @apply bg-slate-100 text-brand-700 px-1.5 py-0.5 rounded font-mono text-sm;
+}
+
+.tiptap pre code {
+  @apply bg-transparent text-slate-100 p-0;
+}

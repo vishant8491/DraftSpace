@@ -1,0 +1,25 @@
+{
+  "name": "draftspace-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DraftSpace — Lightweight shared document editor inspired by Google Docs",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build --workspace=server && npm run build --workspace=client",
+    "build:server": "npm run build --workspace=server",
+    "build:client": "npm run build --workspace=client",
+    "test": "npm run test --workspace=server",
+    "test:watch": "npm run test:watch --workspace=server",
+    "db:setup": "npm run db:setup --workspace=server",
+    "db:seed": "npm run db:seed --workspace=server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
