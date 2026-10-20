@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DocumentItem, DocumentShare, User, Role } from '../types';
+import { DocumentItem, DocumentShare } from '../types';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { X, UserPlus, Trash2, Shield, Check, Loader2 } from 'lucide-react';
@@ -22,7 +22,6 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
-  const [selectedRole, setSelectedRole] = useState<'editor' | 'viewer'>('editor');
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -30,10 +29,10 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   // Load active shares
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && isOwner) {
       loadShares();
     }
-  }, [isOpen, document.id]);
+  }, [isOpen, document.id, isOwner]);
 
   const loadShares = async () => {
     try {
@@ -63,8 +62,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({
     try {
       setSubmitting(true);
       setError(null);
-      await api.addOrUpdateShare(document.id, selectedUserId, selectedRole);
-      setSuccessMsg('Collaborator added successfully');
+      await api.addShare(document.id, selectedUserId);
+      setSuccessMsg('Collaborator granted editor access successfully.');
       setSelectedUserId('');
       await loadShares();
       onShareUpdated?.();
@@ -73,17 +72,6 @@ export const ShareModal: React.FC<ShareModalProps> = ({
       setError(err.message || 'Failed to add collaborator');
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleRoleChange = async (userId: string, newRole: 'editor' | 'viewer') => {
-    try {
-      setError(null);
-      await api.addOrUpdateShare(document.id, userId, newRole);
-      await loadShares();
-      onShareUpdated?.();
-    } catch (err: any) {
-      setError(err.message || 'Failed to update collaborator role');
     }
   };
 
@@ -133,7 +121,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           {isOwner ? (
             <form onSubmit={handleAddCollaborator} className="space-y-3">
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Add Collaborators
+                Grant Editor Access
               </label>
               <div className="flex gap-2">
                 <select
@@ -141,21 +129,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                   onChange={(e) => setSelectedUserId(e.target.value)}
                   className="flex-1 px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white"
                 >
-                  <option value="">Select a team member...</option>
+                  <option value="">Select a demo user to share with...</option>
                   {availableUsers.map((user) => (
                     <option key={user.id} value={user.id}>
-                      {user.name} ({user.email})
+                      {user.displayName} ({user.email})
                     </option>
                   ))}
-                </select>
-
-                <select
-                  value={selectedRole}
-                  onChange={(e) => setSelectedRole(e.target.value as 'editor' | 'viewer')}
-                  className="px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white"
-                >
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
                 </select>
 
                 <button
@@ -164,14 +143,14 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                   className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-                  <span>Share</span>
+                  <span>Grant Access</span>
                 </button>
               </div>
             </form>
           ) : (
             <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200 text-sm text-slate-600 flex items-center gap-2">
               <Shield className="w-4 h-4 text-slate-400" />
-              <span>Only the document owner can grant or modify sharing permissions.</span>
+              <span>Only the document owner can grant or revoke sharing access.</span>
             </div>
           )}
 
@@ -191,14 +170,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                 {/* Document Owner */}
                 <div className="py-3 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <img
-                      src={document.owner.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(document.owner.name)}`}
-                      alt={document.owner.name}
-                      className="w-9 h-9 rounded-full object-cover border border-slate-200"
-                    />
+                    <div className="w-9 h-9 rounded-full bg-brand-600 text-white font-bold text-xs flex items-center justify-center">
+                      {document.owner.displayName.charAt(0)}
+                    </div>
                     <div>
                       <div className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
-                        <span>{document.owner.name}</span>
+                        <span>{document.owner.displayName}</span>
                         {document.ownerId === currentUser?.id && (
                           <span className="text-xs text-slate-400 font-normal">(you)</span>
                         )}
@@ -206,7 +183,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                       <div className="text-xs text-slate-500">{document.owner.email}</div>
                     </div>
                   </div>
-                  <span className="px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-700 rounded-md">
+                  <span className="px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md">
                     Owner
                   </span>
                 </div>
@@ -215,14 +192,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                 {shares.map((share) => (
                   <div key={share.id} className="py-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <img
-                        src={share.user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(share.user.name)}`}
-                        alt={share.user.name}
-                        className="w-9 h-9 rounded-full object-cover border border-slate-200"
-                      />
+                      <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center">
+                        {share.user.displayName.charAt(0)}
+                      </div>
                       <div>
                         <div className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
-                          <span>{share.user.name}</span>
+                          <span>{share.user.displayName}</span>
                           {share.userId === currentUser?.id && (
                             <span className="text-xs text-slate-400 font-normal">(you)</span>
                           )}
@@ -232,29 +207,18 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {isOwner ? (
-                        <>
-                          <select
-                            value={share.role}
-                            onChange={(e) => handleRoleChange(share.userId, e.target.value as 'editor' | 'viewer')}
-                            className="px-2.5 py-1 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          >
-                            <option value="editor">Editor</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
-                          <button
-                            type="button"
-                            title="Remove collaborator"
-                            onClick={() => handleRemoveCollaborator(share.userId)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </>
-                      ) : (
-                        <span className="px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-700 rounded-md capitalize">
-                          {share.role}
-                        </span>
+                      <span className="px-2.5 py-1 text-xs font-medium bg-brand-50 text-brand-700 border border-brand-200 rounded-md">
+                        Shared Editor
+                      </span>
+                      {isOwner && (
+                        <button
+                          type="button"
+                          title="Revoke access"
+                          onClick={() => handleRemoveCollaborator(share.userId)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
                   </div>

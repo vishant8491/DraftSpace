@@ -1,33 +1,30 @@
-export type Role = 'owner' | 'editor' | 'viewer';
+export type Role = 'owner' | 'editor';
 
 export interface User {
   id: string;
   email: string;
-  name: string;
-  avatar?: string | null;
+  displayName: string;
 }
 
 export interface DocumentShare {
   id: string;
   documentId: string;
   userId: string;
-  role: 'editor' | 'viewer';
   createdAt: string;
-  updatedAt: string;
   user: User;
 }
 
 export interface DocumentItem {
   id: string;
   title: string;
-  content: string;
+  content: string | object;
   ownerId: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
   owner: User;
   shares?: DocumentShare[];
   role: Role;
-  shareId?: string;
   sharedAt?: string;
 }
 
@@ -39,9 +36,12 @@ export interface DocumentListResponse {
 export interface DocumentDetailResponse {
   document: DocumentItem;
   role: Role;
+  version: number;
 }
 
-export interface AuthResponse {
-  token: string;
+export interface DemoSessionResponse {
+  message: string;
   user: User;
+  sessionToken: string;
+  expiresAt: string;
 }

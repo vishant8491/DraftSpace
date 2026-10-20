@@ -10,18 +10,18 @@ import { DocumentItem } from './types';
 import { api } from './api/client';
 
 export const MainContent: React.FC = () => {
-  const { currentUser, sessionToken } = useAuth();
+  const { currentUser } = useAuth();
   const [ownedDocs, setOwnedDocs] = useState<DocumentItem[]>([]);
   const [sharedDocs, setSharedDocs] = useState<DocumentItem[]>([]);
   const [currentDocument, setCurrentDocument] = useState<DocumentItem | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSaveDataRef = useRef<{ title?: string; content?: string } | null>(null);
+  const pendingSaveDataRef = useRef<{ title?: string; content?: any } | null>(null);
 
   const addToast = (type: 'success' | 'error' | 'info', text: string) => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -37,7 +37,6 @@ export const MainContent: React.FC = () => {
 
   // Load documents for active user
   const loadDocuments = useCallback(async () => {
-    if (!sessionToken) return;
     try {
       setLoading(true);
       const res = await api.listDocuments();
@@ -49,39 +48,54 @@ export const MainContent: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [sessionToken]);
+  }, []);
 
   useEffect(() => {
-    loadDocuments();
-    // Reset view to dashboard when user changes
-    setCurrentDocument(null);
+    if (currentUser) {
+      loadDocuments();
+      // Return to dashboard when user switches
+      setCurrentDocument(null);
+    }
   }, [loadDocuments, currentUser?.id]);
 
-  // Execute Save
-  const performSave = async (id: string, data: { title?: string; content?: string }) => {
+  // Execute Save with Optimistic Concurrency Control
+  const performSave = async (id: string, version: number, data: { title?: string; content?: any }) => {
     try {
       setSaveStatus('saving');
-      const res = await api.updateDocument(id, data);
-      setCurrentDocument((prev) => (prev && prev.id === id ? { ...prev, ...res.document } : prev));
+      const res = await api.updateDocument(id, {
+        version,
+        ...data,
+      });
+
+      setCurrentDocument((prev) =>
+        prev && prev.id === id ? { ...prev, ...res.document, version: res.version } : prev
+      );
       setSaveStatus('saved');
       pendingSaveDataRef.current = null;
     } catch (err: any) {
-      setSaveStatus('unsaved');
-      console.error('Save failed:', err);
-      addToast('error', err.message || 'Failed to save changes');
+      if (err.status === 409 || err.code === 'CONCURRENCY_CONFLICT') {
+        setSaveStatus('conflict');
+        addToast(
+          'error',
+          'Concurrency Conflict (409): Modified by another session. Please reload before saving.'
+        );
+      } else {
+        setSaveStatus('unsaved');
+        addToast('error', err.message || 'Failed to save changes');
+      }
     }
   };
 
   // Debounced auto-save handler for editor content changes
-  const handleContentChange = (newHtml: string) => {
-    if (!currentDocument || currentDocument.role === 'viewer') return;
+  const handleContentChange = (newJsonContent: any) => {
+    if (!currentDocument) return;
 
-    setCurrentDocument((prev) => (prev ? { ...prev, content: newHtml } : null));
+    setCurrentDocument((prev) => (prev ? { ...prev, content: newJsonContent } : null));
     setSaveStatus('unsaved');
 
     pendingSaveDataRef.current = {
       ...(pendingSaveDataRef.current || {}),
-      content: newHtml,
+      content: newJsonContent,
     };
 
     if (autoSaveTimerRef.current) {
@@ -90,14 +104,15 @@ export const MainContent: React.FC = () => {
 
     autoSaveTimerRef.current = setTimeout(() => {
       if (currentDocument && pendingSaveDataRef.current) {
-        performSave(currentDocument.id, pendingSaveDataRef.current);
+        performSave(currentDocument.id, currentDocument.version, pendingSaveDataRef.current);
       }
     }, 1200);
   };
 
-  // Title change handler
+  // Title change handler (Owner only)
   const handleTitleChange = (newTitle: string) => {
-    if (!currentDocument || currentDocument.role === 'viewer') return;
+    if (!currentDocument || currentDocument.ownerId !== currentUser?.id) return;
+
     setCurrentDocument((prev) => (prev ? { ...prev, title: newTitle } : null));
     setSaveStatus('unsaved');
     pendingSaveDataRef.current = {
@@ -108,16 +123,16 @@ export const MainContent: React.FC = () => {
 
   // Title blur immediate save
   const handleTitleBlur = () => {
-    if (!currentDocument || currentDocument.role === 'viewer' || !pendingSaveDataRef.current) return;
+    if (!currentDocument || currentDocument.ownerId !== currentUser?.id || !pendingSaveDataRef.current) return;
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
-    performSave(currentDocument.id, pendingSaveDataRef.current);
+    performSave(currentDocument.id, currentDocument.version, pendingSaveDataRef.current);
   };
 
   // Manual save (Ctrl+S or button)
   const handleManualSave = () => {
-    if (!currentDocument || currentDocument.role === 'viewer') return;
+    if (!currentDocument) return;
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
@@ -125,7 +140,7 @@ export const MainContent: React.FC = () => {
       title: currentDocument.title,
       content: currentDocument.content,
     };
-    performSave(currentDocument.id, dataToSave);
+    performSave(currentDocument.id, currentDocument.version, dataToSave);
   };
 
   // Keyboard shortcut Ctrl+S
@@ -148,6 +163,7 @@ export const MainContent: React.FC = () => {
       setCurrentDocument({
         ...res.document,
         role: res.role,
+        version: res.version,
       });
       setSaveStatus('saved');
       pendingSaveDataRef.current = null;
@@ -165,7 +181,6 @@ export const MainContent: React.FC = () => {
       setLoading(true);
       const res = await api.createDocument({
         title: 'Untitled Document',
-        content: '<p></p>',
       });
       addToast('success', 'New document created');
       await loadDocuments();
@@ -206,7 +221,7 @@ export const MainContent: React.FC = () => {
         currentDocument={currentDocument}
         onBackToDashboard={() => {
           if (pendingSaveDataRef.current && currentDocument) {
-            performSave(currentDocument.id, pendingSaveDataRef.current);
+            performSave(currentDocument.id, currentDocument.version, pendingSaveDataRef.current);
           }
           setCurrentDocument(null);
           loadDocuments();
@@ -223,9 +238,11 @@ export const MainContent: React.FC = () => {
       <main className="flex-1 flex flex-col">
         {currentDocument ? (
           <TiptapEditor
+            key={currentDocument.id}
+            documentId={currentDocument.id}
             content={currentDocument.content}
             onChange={handleContentChange}
-            editable={currentDocument.role !== 'viewer'}
+            editable={true} // Shared editors and owners can edit content; title is owner-locked in header
           />
         ) : (
           <Dashboard
@@ -254,7 +271,7 @@ export const MainContent: React.FC = () => {
             loadDocuments();
             if (currentDocument) {
               api.getDocument(currentDocument.id).then((res) => {
-                setCurrentDocument({ ...res.document, role: res.role });
+                setCurrentDocument({ ...res.document, role: res.role, version: res.version });
               });
             }
           }}

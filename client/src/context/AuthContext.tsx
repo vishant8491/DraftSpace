@@ -4,55 +4,48 @@ import { api } from '../api/client';
 
 interface AuthContextType {
   currentUser: User | null;
-  sessionToken: string | null;
   demoUsers: User[];
   loading: boolean;
   switchUser: (userId: string) => Promise<void>;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
 const TOKEN_KEY = 'draftspace_session_token';
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [demoUsers, setDemoUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Load demo users and initialize session
   useEffect(() => {
     async function initAuth() {
       try {
         setLoading(true);
-        // Fetch all available demo users
-        const users = await api.getUsers();
-        setDemoUsers(users);
+        // Load demo users list
+        const res = await api.getDemoUsers();
+        setDemoUsers(res.users);
 
-        const storedToken = localStorage.getItem(TOKEN_KEY);
-        if (storedToken) {
-          try {
-            const me = await api.getMe();
-            setCurrentUser(me.user);
-            setSessionToken(storedToken);
-            setLoading(false);
-            return;
-          } catch {
-            // Token expired or invalid, fall through to default
-            localStorage.removeItem(TOKEN_KEY);
-          }
+        // Try restoring existing session
+        try {
+          const me = await api.getMe();
+          setCurrentUser(me.user);
+          setLoading(false);
+          return;
+        } catch {
+          // No active session or expired
+          localStorage.removeItem(TOKEN_KEY);
         }
 
-        // Default to first demo user (Alex Rivera)
-        if (users.length > 0) {
-          const res = await api.loginAsUser(users[0].id);
-          localStorage.setItem(TOKEN_KEY, res.token);
-          setSessionToken(res.token);
-          setCurrentUser(res.user);
+        // Default to first demo user (Alice Smith)
+        if (res.users.length > 0) {
+          const sessionRes = await api.createDemoSession(res.users[0].id);
+          localStorage.setItem(TOKEN_KEY, sessionRes.sessionToken);
+          setCurrentUser(sessionRes.user);
         }
       } catch (err) {
-        console.error('Failed to initialize authentication:', err);
+        console.error('Failed to initialize demo identity:', err);
       } finally {
         setLoading(false);
       }
@@ -64,13 +57,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const switchUser = async (userId: string) => {
     try {
       setLoading(true);
-      const res = await api.loginAsUser(userId);
-      localStorage.setItem(TOKEN_KEY, res.token);
-      setSessionToken(res.token);
+      const res = await api.createDemoSession(userId);
+      localStorage.setItem(TOKEN_KEY, res.sessionToken);
       setCurrentUser(res.user);
     } catch (err) {
-      console.error('Failed to switch user:', err);
+      console.error('Failed to switch demo user:', err);
       throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      setLoading(true);
+      await api.deleteSession();
+      localStorage.removeItem(TOKEN_KEY);
+      setCurrentUser(null);
+    } catch (err) {
+      console.error('Logout error:', err);
     } finally {
       setLoading(false);
     }
@@ -82,6 +87,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setCurrentUser(me.user);
     } catch (err) {
       console.error('Failed to refresh user:', err);
+      setCurrentUser(null);
     }
   };
 
@@ -89,10 +95,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     <AuthContext.Provider
       value={{
         currentUser,
-        sessionToken,
         demoUsers,
         loading,
         switchUser,
+        logout,
         refreshUser,
       }}
     >

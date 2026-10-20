@@ -1,43 +1,46 @@
 # DraftSpace — Requirements & Feature Traceability
 
-DraftSpace is a lightweight shared document editor inspired by Google Docs, built as an end-to-end full-stack web application.
+DraftSpace is a lightweight shared document editor inspired by Google Docs, built with persistent backend storage, optimistic concurrency control, and strict role-based access control.
 
 ---
 
 ## 1. Requirement-to-Feature Checklist
 
-| # | Requirement | Implementation Feature | Verification / Acceptance Criteria | Status |
-|---|-------------|------------------------|-----------------------------------|--------|
-| **1** | **Create and rename documents** | • "New Document" button<br>• Inline editable document title in header<br>• Real-time title rename with validation | Title updates on blur / Enter; non-empty title validation; persistent in DB. | ⏳ In Progress |
-| **2** | **Edit document content in browser** | • Rich-text editing area powered by Tiptap<br>• Full browser editing with comfortable writing layout | Fast, responsive typing; cursor tracking; zero visual flicker. | ⏳ In Progress |
-| **3** | **Formatting & Typography** | • Bold (`ctrl+b`)<br>• Italic (`ctrl+i`)<br>• Underline (`ctrl+u`)<br>• Headings (H1, H2, H3, Paragraph)<br>• Bulleted list (`ul`) & Numbered list (`ol`) | Active toolbar state reflects current selection; keyboard shortcuts work; HTML formatting rendered accurately. | ⏳ In Progress |
-| **4** | **Save & Reopen with formatting preserved** | • Auto-save debounced indicator ("Saved", "Saving...", "Unsaved changes")<br>• Explicit "Save" button<br>• Complete document reload | Reloading page preserves all formatting (headings, lists, bold, italics, underlines). | ⏳ In Progress |
-| **5** | **Product-relevant file upload** | • Import UTF-8 `.txt` and `.md` files as new documents<br>• Insert file text into active document<br>• File size & MIME validation | Drag-and-drop or file picker; creates new editable document with title derived from filename; prevents oversized/invalid files. | ⏳ In Progress |
-| **6** | **Document ownership** | • `ownerId` associated with creating user<br>• Ownership badge ("Owner") in dashboard and editor | User who created the document is designated owner; only owner can delete or manage sharing. | ⏳ In Progress |
-| **7** | **Owner can grant access** | • "Share" modal with user selector<br>• Role assignment: `editor` (can edit) or `viewer` (read-only)<br>• Revoke access capability | Owner can add/remove collaborators; backend rejects sharing attempts by non-owners with 403 Forbidden. | ⏳ In Progress |
-| **8** | **Distinguish owned vs shared docs** | • Dashboard tabs: "My Documents" vs. "Shared with Me"<br>• Clear visual chips: "Owner", "Shared by [User]", "Editor", "Viewer" | Immediately obvious whether current user owns the document or has shared access. | ⏳ In Progress |
-| **9** | **Persist in backend database** | • Prisma ORM with relational schema (`User`, `Document`, `DocumentShare`, `Session`)<br>• PostgreSQL support (production) + SQLite fallback (local zero-dependency) | Data persists across server restarts; foreign keys and cascade rules maintained. | ⏳ In Progress |
-| **10** | **Validation, errors, setup, test, arch note** | • Zod payload validation<br>• Centralized error handler with standardized JSON<br>• Root scripts (`npm run dev`, `build`, `test`)<br>• Automated tests (access control, CRUD, permissions)<br>• `ARCHITECTURE.md` | Automated test suite passes; API returns 400/401/403/404 with helpful messages; setup steps documented. | ⏳ In Progress |
-| **11** | **Honest AI workflow note** | • `SUBMISSION.md` and `README.md` documenting AI usage, tool prompts, assisted tasks, human-driven decisions | Full transparency on code generation, architecture decisions, and debugging. | ⏳ In Progress |
-| **12** | **Submission materials & 3–5 min walkthrough** | • `SUBMISSION.md` with structured walkthrough outline, demo flow, and presentation script | Clear script guiding evaluator through a 3–5 minute presentation. | ⏳ In Progress |
+| # | Requirement | Implementation Feature | Verification & Acceptance Evidence | Status |
+|---|-------------|------------------------|------------------------------------|:------:|
+| **1** | **Create and rename documents** | • `POST /api/documents`<br>• `PATCH /api/documents/:id` with owner check<br>• Trimmed titles, 1–120 characters | `POST` creates doc; `PATCH` renames; empty or >120 char rejected (400); shared editors attempting rename rejected with 403. | ✅ Verified (Tests 7, 8, 17) |
+| **2** | **Edit document content in browser** | • Tiptap rich-text editor with Google Docs layout<br>• Stored as validated editor JSON | Tiptap JSON `{ type: "doc", content: [...] }` validated against allowed nodes/marks; unsupported node types rejected with 400. | ✅ Verified (Tests 10, 11) |
+| **3** | **Formatting & Typography** | • Bold, Italic, Underline, Headings (H1/H2/H3), Bulleted lists, Numbered lists, Quotes, Code blocks | Supported node and mark schemas enforced both on frontend and in backend schema validator (`editorValidator.ts`). | ✅ Verified (Test 11) |
+| **4** | **Save & Reopen with formatting preserved** | • Debounced auto-save (1.2s) + manual `Ctrl+S`<br>• Atomic optimistic concurrency versioning (`v1` → `v2`) | Update increments version; reloading page preserves full JSON document; stale version returns 409 Conflict without overwriting. | ✅ Verified (Tests 12, 13, 14) |
+| **5** | **Product-relevant file upload** | • `POST /api/documents/import`<br>• Imports UTF-8 `.txt` and `.md` files into valid editor JSON | Converts headers and lists into ProseMirror AST nodes; owner set to active user; initial version set to 1. | ✅ Verified (Test 27) |
+| **6** | **Document ownership** | • `Document.ownerId` referencing `User.id`<br>• Owner badge in dashboard and editor header | Owner resolved strictly from server-issued session; spoofed `ownerId` in request bodies strictly ignored. | ✅ Verified (Tests 9, 15) |
+| **7** | **Owner can grant & revoke access** | • `POST /api/documents/:id/shares`<br>• `DELETE /api/documents/:id/shares/:userId`<br>• Safe idempotent grants via `upsert` | Only owner can share/revoke; non-owner receives 403; self-share rejected with 400; unknown user rejected with 404. | ✅ Verified (Tests 21–26) |
+| **8** | **Distinguish owned vs shared docs** | • Dashboard tabs: "My Documents" vs. "Shared with me"<br>• Clear visual chips: "Owner", "Shared Editor", version badges | `GET /api/documents` strictly returns owned docs and shared docs; unshared private docs never leak in list responses. | ✅ Verified (Test 20) |
+| **9** | **Persist in backend database** | • Prisma ORM with relational schema (`User`, `Document`, `DocumentShare`, `Session`)<br>• PostgreSQL (production) + SQLite (zero-setup dev/test) | Changes persist across restarts; idempotent seed script never wipes database unexpectedly. | ✅ Verified (All 27 tests pass idempotently) |
+| **10** | **Validation, errors, setup, test, arch note** | • Zod request validation, centralized error handler<br>• 27 automated integration tests passing (`npm test`)<br>• Comprehensive `ARCHITECTURE.md` | All 27 tests passing; standardized error responses `{ error, code }`; no credential or stack trace leaks. | ✅ Verified |
+| **11** | **Honest AI workflow note** | • Documented AI prompt strategy, human architecture decisions, and code validation | Documented in `SUBMISSION.md` and `README.md`. | ✅ Verified |
+| **12** | **Submission materials & 3–5 min walkthrough** | • `SUBMISSION.md` with structured walkthrough outline, demo flow, and presentation script | Clear script guiding evaluator through a 3–5 minute presentation. | ✅ Verified |
 
 ---
 
-## 2. Core Personas (Seeded Demo Users)
+## 2. Demo Identity Personas
 
-To make evaluation seamless without requiring signup/email verification, DraftSpace includes 3 pre-seeded demo users with an instant session switcher:
+Seeded with 3 realistic accounts with server-issued HttpOnly session cookies:
 
-1. **Alex Rivera** (`alex@draftspace.dev`) — Primary writer/owner.
-2. **Morgan Chen** (`morgan@draftspace.dev`) — Collaborator (editor on some documents, viewer on others).
-3. **Sam Taylor** (`sam@draftspace.dev`) — External team member (used to test permissions and unshared document isolation).
+1. **Alice Smith** (`alice@draftspace.dev`) — Owner of starter specification and confidential memo.
+2. **Bob Jones** (`bob@draftspace.dev`) — Shared editor on Alice's specification, owner of research notes.
+3. **Charlie Brown** (`charlie@draftspace.dev`) — Unshared team member, cannot read or list Alice's private documents.
 
 ---
 
-## 3. Scope Boundaries & Explicit Non-Goals
+## 3. Strict Access Control Matrix
 
-As specified in the assessment guidelines:
-- ❌ **No simultaneous real-time operational transformation / CRDTs**: Normal document sharing with access control, not multi-cursor WebSockets.
-- ❌ **No comments or threaded review system**: Focus on document editing and sharing.
-- ❌ **No AI text generation**: Focus on core rich-text editor, storage, and access controls.
-- ❌ **No complex billing or multi-tenant organizations**: Focus on user-to-user document sharing.
-- ❌ **No elaborate OAuth / magic-link flows**: Seeded demo users with server-issued session tokens for friction-free evaluation.
+| Action | Owner | Shared Editor | Unshared User |
+|--------|:-----:|:-------------:|:-------------:|
+| **Read Document** | ✅ Yes | ✅ Yes | ❌ 403 Forbidden |
+| **Edit Content** | ✅ Yes | ✅ Yes (atomic version check) | ❌ 403 Forbidden |
+| **Rename Title** | ✅ Yes | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **List Shares** | ✅ Yes | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **Grant Access** | ✅ Yes | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **Revoke Access** | ✅ Yes | ❌ 403 Forbidden | ❌ 403 Forbidden |
+| **Delete Document** | ✅ Yes | ❌ 403 Forbidden | ❌ 403 Forbidden |

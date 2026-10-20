@@ -9,26 +9,37 @@ generator client {
 }
 
 model User {
-  id        String          @id @default(cuid())
-  email     String          @unique
-  name      String
-  avatar    String?
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  id          String          @id @default(cuid())
+  email       String          @unique
+  displayName String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
-  documents Document[]      @relation("DocumentOwner")
-  shares    DocumentShare[]
-  sessions  Session[]
+  ownedDocuments  Document[]      @relation("DocumentOwner")
+  sharedDocuments DocumentShare[]
+  sessions        Session[]
 
   @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique // SHA-256 hash of the opaque session token
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("sessions")
 }
 
 model Document {
   id        String          @id @default(cuid())
   title     String          @default("Untitled Document")
-  content   String          @default("")
+  content   String          @default("{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}")
   ownerId   String
   owner     User            @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  version   Int             @default(1) // Integer version for optimistic concurrency
   shares    DocumentShare[]
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
@@ -42,21 +53,8 @@ model DocumentShare {
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role       String   @default("editor") // "editor" or "viewer"
   createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
 
   @@unique([documentId, userId])
   @@map("document_shares")
-}
-
-model Session {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  @@map("sessions")
 }

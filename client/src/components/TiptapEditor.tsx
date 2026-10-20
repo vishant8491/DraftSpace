@@ -7,16 +7,29 @@ import { EditorToolbar } from './EditorToolbar';
 import { Lock } from 'lucide-react';
 
 interface TiptapEditorProps {
-  content: string;
-  onChange: (html: string) => void;
+  content: any;
+  onChange: (jsonContent: any) => void;
   editable: boolean;
+  documentId: string;
 }
 
 export const TiptapEditor: React.FC<TiptapEditorProps> = ({
   content,
   onChange,
   editable,
+  documentId,
 }) => {
+  const parseContent = (val: any) => {
+    if (typeof val === 'string') {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return val;
+      }
+    }
+    return val || { type: 'doc', content: [{ type: 'paragraph' }] };
+  };
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -29,10 +42,10 @@ export const TiptapEditor: React.FC<TiptapEditorProps> = ({
         types: ['heading', 'paragraph'],
       }),
     ],
-    content,
+    content: parseContent(content),
     editable,
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      onChange(editor.getJSON());
     },
     editorProps: {
       attributes: {
@@ -41,12 +54,12 @@ export const TiptapEditor: React.FC<TiptapEditorProps> = ({
     },
   });
 
-  // Keep editor content in sync when loaded/changed externally
+  // Re-sync editor content whenever a new document is opened
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content, false);
+    if (editor) {
+      editor.commands.setContent(parseContent(content), false);
     }
-  }, [content, editor]);
+  }, [documentId, editor]);
 
   // Keep editable status updated
   useEffect(() => {
@@ -62,7 +75,7 @@ export const TiptapEditor: React.FC<TiptapEditorProps> = ({
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800 flex items-center justify-center gap-2">
           <Lock className="w-4 h-4 text-amber-600" />
           <span>
-            <strong>View-Only Access:</strong> You do not have permission to edit this document.
+            <strong>View-Only Mode:</strong> You do not have edit permissions on this document.
           </span>
         </div>
       )}
